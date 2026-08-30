@@ -1,0 +1,6 @@
+{
+  "name": "Salah Tracker",
+  "description": "An ultra-minimalist, distraction-free daily Salah and Namaz tracker featuring monochromatic brutalist aesthetics and manual prayer timing control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
