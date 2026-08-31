@@ -177,3 +177,101 @@ export async function syncRemoteDayLog(
     return { success: false, error: 'Offline: Saved locally.' };
   }
 }
+
+/**
+ * Supabase Auth Methods (Email + Password only)
+ */
+export async function signInWithEmail(
+  email: string,
+  password: string
+): Promise<{ user: any; error: string | null }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { user: null, error: 'Supabase client is not configured.' };
+  }
+
+  try {
+    const { data, error } = await client.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      // User-friendly error message, never show raw stack
+      return { user: null, error: 'Unable to sign in. Please check your email and password.' };
+    }
+
+    return { user: data.user, error: null };
+  } catch {
+    return { user: null, error: 'Unable to connect. Please check your internet connection.' };
+  }
+}
+
+export async function signUpWithEmail(
+  email: string,
+  password: string
+): Promise<{ user: any; error: string | null }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { user: null, error: 'Supabase client is not configured.' };
+  }
+
+  try {
+    const { data, error } = await client.auth.signUp({
+      email,
+      password,
+    });
+
+    if (error) {
+      return { user: null, error: error.message || 'Unable to create account. Please try again.' };
+    }
+
+    return { user: data.user, error: null };
+  } catch {
+    return { user: null, error: 'Unable to connect. Please check your internet connection.' };
+  }
+}
+
+export async function signOutUser(): Promise<{ error: string | null }> {
+  const client = getSupabaseClient();
+  if (!client) return { error: null };
+
+  try {
+    const { error } = await client.auth.signOut();
+    if (error) {
+      return { error: 'Unable to sign out.' };
+    }
+    return { error: null };
+  } catch {
+    return { error: 'Unable to sign out.' };
+  }
+}
+
+export async function getCurrentSessionUser(): Promise<any | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const { data } = await client.auth.getSession();
+    return data?.session?.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function subscribeToAuthChanges(callback: (user: any | null) => void): () => void {
+  const client = getSupabaseClient();
+  if (!client) return () => {};
+
+  try {
+    const { data: authListener } = client.auth.onAuthStateChange((_event, session) => {
+      callback(session?.user ?? null);
+    });
+
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
+  } catch {
+    return () => {};
+  }
+}

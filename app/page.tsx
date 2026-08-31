@@ -31,6 +31,9 @@ import {
   fetchRemoteDayLogs,
   syncRemoteDayLog,
   isSupabaseConfigured,
+  getCurrentSessionUser,
+  subscribeToAuthChanges,
+  signOutUser,
 } from '@/lib/supabase';
 import LoadingScreen from '@/components/LoadingScreen';
 import HomeScreen from '@/components/HomeScreen';
@@ -38,6 +41,7 @@ import EditScreen from '@/components/EditScreen';
 import BinScreen from '@/components/BinScreen';
 import SettingsScreen from '@/components/SettingsScreen';
 import AboutScreen from '@/components/AboutScreen';
+import AuthScreen from '@/components/AuthScreen';
 import BottomNav from '@/components/BottomNav';
 
 export default function Page() {
@@ -46,10 +50,51 @@ export default function Page() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [currentDateKey, setCurrentDateKey] = useState<string>(() => getTodayKey());
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('home');
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [authInitialized, setAuthInitialized] = useState<boolean>(false);
 
-  // Hydrate from Supabase on initial load if configured
+  // Initialize auth session and listen for auth state changes
   useEffect(() => {
-    if (!isSupabaseConfigured()) return;
+    let isMounted = true;
+
+    async function initAuth() {
+      if (!isSupabaseConfigured()) {
+        if (isMounted) setAuthInitialized(true);
+        return;
+      }
+
+      try {
+        const user = await getCurrentSessionUser();
+        if (isMounted) {
+          setCurrentUser(user);
+          setAuthInitialized(true);
+        }
+      } catch {
+        if (isMounted) {
+          setCurrentUser(null);
+          setAuthInitialized(true);
+        }
+      }
+    }
+
+    initAuth();
+
+    const unsubscribe = subscribeToAuthChanges((user) => {
+      if (isMounted) {
+        setCurrentUser(user);
+        setAuthInitialized(true);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  // Hydrate from Supabase on initial load or user change if configured
+  useEffect(() => {
+    if (!isSupabaseConfigured() || !currentUser) return;
 
     let isMounted = true;
     async function hydrateCloudData() {
@@ -80,7 +125,13 @@ export default function Page() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [currentUser]);
+
+  const handleSignOut = async () => {
+    await signOutUser();
+    setCurrentUser(null);
+    setCurrentScreen('home');
+  };
 
   // Sync state changes with storage and cloud
   const handleUpdateSalahItems = (newItems: SalahItem[]) => {
@@ -272,6 +323,32 @@ export default function Page() {
   const activeCompletedIds = activeDayRec.prayed;
   const binCount = salahItems.filter((i) => Boolean(i.deletedAt)).length;
 
+  // 1. Initial Session Check Loading (Prevents flickering)
+  if (!authInitialized) {
+    return (
+      <main className="min-h-screen bg-white text-black flex flex-col items-center justify-center font-sans">
+        <span className="text-xs font-mono font-bold tracking-[0.25em] text-neutral-400 uppercase animate-pulse">
+          Salah
+        </span>
+      </main>
+    );
+  }
+
+  // 2. Unauthenticated Gate: Show Authentication Page as the First Screen
+  if (!currentUser) {
+    return (
+      <main className="min-h-screen bg-white text-black font-sans">
+        <AuthScreen
+          onSuccess={(user) => {
+            setCurrentUser(user);
+            setCurrentScreen('home');
+          }}
+        />
+      </main>
+    );
+  }
+
+  // 3. Authenticated Application Experience
   return (
     <main className="min-h-screen bg-white text-black flex flex-col font-sans">
       <AnimatePresence mode="wait">
@@ -331,6 +408,8 @@ export default function Page() {
       {currentScreen === 'settings' && (
         <SettingsScreen
           settings={settings}
+          currentUser={currentUser}
+          onSignOut={handleSignOut}
           onUpdateSettings={handleUpdateSettings}
           onClearHistory={handleClearHistory}
           onResetAllData={handleResetAllData}
@@ -343,7 +422,7 @@ export default function Page() {
         <AboutScreen onBack={() => setCurrentScreen('settings')} />
       )}
 
-      {/* Fixed Bottom Navigation (visible except during loading animation) */}
+      {/* Fixed Bottom Navigation (visible on authenticated main app screens) */}
       {currentScreen !== 'loading' && (
         <BottomNav
           currentScreen={currentScreen}

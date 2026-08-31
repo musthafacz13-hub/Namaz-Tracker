@@ -2,11 +2,26 @@
 
 import React, { useState, useRef } from 'react';
 import { AppSettings } from '@/lib/types';
-import { ArrowRight, ChevronLeft, Download, Upload, Trash2, Bell, Volume2, Smartphone, Clock, Sparkles } from 'lucide-react';
+import {
+  ArrowRight,
+  ChevronLeft,
+  Download,
+  Upload,
+  Trash2,
+  Bell,
+  Volume2,
+  Smartphone,
+  Clock,
+  Sparkles,
+  User,
+  LogOut,
+} from 'lucide-react';
 import { exportAllData, importData } from '@/lib/storage';
 
 interface SettingsScreenProps {
   settings: AppSettings;
+  currentUser?: any | null;
+  onSignOut: () => void;
   onUpdateSettings: (updates: Partial<AppSettings>) => void;
   onClearHistory: () => void;
   onResetAllData: () => void;
@@ -16,6 +31,8 @@ interface SettingsScreenProps {
 
 export default function SettingsScreen({
   settings,
+  currentUser,
+  onSignOut,
   onUpdateSettings,
   onClearHistory,
   onResetAllData,
@@ -110,6 +127,31 @@ export default function SettingsScreen({
       {/* Main List Menu */}
       {!activeSubView && (
         <div className="divide-y divide-black border-t border-b border-black">
+          {/* Account / Sign Out Row */}
+          {currentUser && (
+            <div className="py-5 px-1 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <User size={20} strokeWidth={2} />
+                <div className="flex flex-col">
+                  <span className="text-lg md:text-xl font-bold tracking-tight uppercase">
+                    Account
+                  </span>
+                  <span className="text-xs font-mono text-neutral-500 truncate max-w-[200px] sm:max-w-xs">
+                    {currentUser.email}
+                  </span>
+                </div>
+              </div>
+              <button
+                id="sign-out-btn"
+                onClick={onSignOut}
+                className="flex items-center gap-1.5 border border-black px-3 py-1.5 font-mono text-xs font-bold uppercase hover:bg-black hover:text-white transition-colors"
+              >
+                <LogOut size={13} strokeWidth={2.5} />
+                <span>SIGN OUT</span>
+              </button>
+            </div>
+          )}
+
           {/* Notification Preferences */}
           <button
             id="menu-notifications"
