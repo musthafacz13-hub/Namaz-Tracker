@@ -15,6 +15,8 @@ import {
   clampDateToMonth,
   parseDateKey,
   formatToDateKey,
+  getYears,
+  getMonths,
   CALENDAR_MIN_YEAR,
   CALENDAR_MAX_YEAR,
 } from '@/lib/calendar';
@@ -198,8 +200,11 @@ export default function HomeScreen({
   }, [monthStats.daysWithLogs]);
 
   // ----------------------------------------------------
-  // 4. MONTH NAVIGATION HANDLERS (2026 – 2045 BOUNDED)
+  // 4. MONTH & YEAR NAVIGATION HANDLERS (2026 – 2045 BOUNDED)
   // ----------------------------------------------------
+  const availableYears = useMemo(() => getYears(), []);
+  const availableMonths = useMemo(() => getMonths(selectedYear), [selectedYear]);
+
   const handlePrevMonth = () => {
     const prev = getPreviousMonth(selectedYear, selectedMonth);
     if (!prev) return;
@@ -211,6 +216,16 @@ export default function HomeScreen({
     const next = getNextMonth(selectedYear, selectedMonth);
     if (!next) return;
     const newKey = clampDateToMonth(next.year, next.month, selectedDay);
+    onSelectDate(newKey);
+  };
+
+  const handleSelectYear = (year: number) => {
+    const newKey = clampDateToMonth(year, selectedMonth, selectedDay);
+    onSelectDate(newKey);
+  };
+
+  const handleSelectMonth = (month: number) => {
+    const newKey = clampDateToMonth(selectedYear, month, selectedDay);
     onSelectDate(newKey);
   };
 
@@ -497,10 +512,40 @@ export default function HomeScreen({
             <ChevronLeft size={18} strokeWidth={2.5} />
           </button>
 
-          <div className="text-center">
-            <span className="text-xs md:text-sm font-black font-sans tracking-widest uppercase">
-              {monthYearDisplay}
-            </span>
+          <div className="flex items-center justify-center gap-2">
+            <label htmlFor="month-select" className="sr-only">
+              Select Month
+            </label>
+            <select
+              id="month-select"
+              value={selectedMonth}
+              onChange={(e) => handleSelectMonth(Number(e.target.value))}
+              aria-label="Select Month"
+              className="text-xs md:text-sm font-black font-sans tracking-wider uppercase bg-transparent cursor-pointer py-1 px-1 border-b border-dashed border-transparent hover:border-black focus:border-black focus:outline-none text-center"
+            >
+              {availableMonths.map((m) => (
+                <option key={m.month} value={m.month} className="bg-white text-black font-mono">
+                  {m.name}
+                </option>
+              ))}
+            </select>
+
+            <label htmlFor="year-select" className="sr-only">
+              Select Year
+            </label>
+            <select
+              id="year-select"
+              value={selectedYear}
+              onChange={(e) => handleSelectYear(Number(e.target.value))}
+              aria-label="Select Year"
+              className="text-xs md:text-sm font-black font-mono tracking-wider uppercase bg-transparent cursor-pointer py-1 px-1 border-b border-dashed border-transparent hover:border-black focus:border-black focus:outline-none text-center"
+            >
+              {availableYears.map((yr) => (
+                <option key={yr} value={yr} className="bg-white text-black font-mono">
+                  {yr}
+                </option>
+              ))}
+            </select>
           </div>
 
           <button
