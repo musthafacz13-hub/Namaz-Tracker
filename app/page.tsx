@@ -8,6 +8,7 @@ import {
   saveSalahItems,
   loadDayLogs,
   saveDayLog,
+  saveAllDayLogs,
   loadSettings,
   saveSettings,
   getTodayKey,
@@ -86,13 +87,22 @@ export default function Page() {
         if (isMounted) {
           if (remoteItems.data && remoteItems.data.length > 0) {
             setSalahItems(remoteItems.data);
-            saveSalahItems(remoteItems.data);
+            saveSalahItems(remoteItems.data, currentUser.id);
+          } else {
+            // New user account with no items yet in cloud: initialize defaults and sync
+            const initialItems = DEFAULT_SALAH_ITEMS;
+            setSalahItems(initialItems);
+            saveSalahItems(initialItems, currentUser.id);
+            syncRemoteSalahItems(initialItems).catch(() => {});
           }
+
           if (remoteLogs.data && Object.keys(remoteLogs.data).length > 0) {
-            setDayLogs((prev) => {
-              const merged = { ...prev, ...remoteLogs.data };
-              return merged;
-            });
+            setDayLogs(remoteLogs.data);
+            saveAllDayLogs(remoteLogs.data, currentUser.id);
+          } else {
+            // New user account has no logs yet: start with completely clean isolated logs
+            setDayLogs({});
+            saveAllDayLogs({}, currentUser.id);
           }
         }
       } catch (err) {
@@ -109,14 +119,16 @@ export default function Page() {
   const handleSignOut = async () => {
     await signOutUser();
     setCurrentUser(null);
+    setSalahItems(DEFAULT_SALAH_ITEMS);
+    setDayLogs({});
     setCurrentScreen('home');
   };
 
   // Sync state changes with storage and cloud
   const handleUpdateSalahItems = (newItems: SalahItem[]) => {
     setSalahItems(newItems);
-    saveSalahItems(newItems);
-    if (isSupabaseConfigured()) {
+    saveSalahItems(newItems, currentUser?.id);
+    if (isSupabaseConfigured() && currentUser) {
       syncRemoteSalahItems(newItems).catch(() => {});
     }
   };
@@ -136,12 +148,12 @@ export default function Page() {
       const updatedRec: DayStatusRecord = { prayed: newPrayed, missed: newMissed };
       const newLogs = { ...dayLogs, [dateKey]: updatedRec };
       setDayLogs(newLogs);
-      saveDayLog(dateKey, updatedRec);
-      if (isSupabaseConfigured()) {
+      saveDayLog(dateKey, updatedRec, currentUser?.id);
+      if (isSupabaseConfigured() && currentUser) {
         syncRemoteDayLog(dateKey, updatedRec).catch(() => {});
       }
     },
-    [currentDateKey, dayLogs]
+    [currentDateKey, dayLogs, currentUser]
   );
 
   const handleCycleSalahStatus = useCallback(
@@ -255,19 +267,22 @@ export default function Page() {
   const handleUpdateSettings = (updates: Partial<AppSettings>) => {
     const newSettings = { ...settings, ...updates };
     setSettings(newSettings);
-    saveSettings(newSettings);
+    saveSettings(newSettings, currentUser?.id);
   };
 
   const handleClearHistory = () => {
-    clearAllHistory();
+    clearAllHistory(currentUser?.id);
     setDayLogs({});
   };
 
   const handleResetAllData = () => {
-    resetToDefaults();
+    resetToDefaults(currentUser?.id);
     setSalahItems(DEFAULT_SALAH_ITEMS);
     setDayLogs({});
     setSettings(DEFAULT_SETTINGS);
+    if (isSupabaseConfigured() && currentUser) {
+      syncRemoteSalahItems(DEFAULT_SALAH_ITEMS).catch(() => {});
+    }
   };
 
   // Notification watcher

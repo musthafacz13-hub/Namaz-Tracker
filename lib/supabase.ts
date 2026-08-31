@@ -199,8 +199,14 @@ export async function signInWithEmail(
     });
 
     if (error) {
-      // User-friendly error message, never show raw stack
-      return { user: null, error: 'Unable to sign in. Please check your email and password.' };
+      let msg = 'Unable to sign in. Please check your email and password.';
+      const lower = error.message.toLowerCase();
+      if (lower.includes('invalid login credentials') || lower.includes('invalid credentials')) {
+        msg = 'Invalid email or password. Please try again.';
+      } else if (lower.includes('email not confirmed')) {
+        msg = 'Please verify your email address before signing in.';
+      }
+      return { user: null, error: msg };
     }
 
     return { user: data.user, error: null };
@@ -225,7 +231,38 @@ export async function signUpWithEmail(
     });
 
     if (error) {
-      return { user: null, error: error.message || 'Unable to create account. Please try again.' };
+      let msg = error.message;
+      const lower = error.message.toLowerCase();
+      if (
+        lower.includes('already registered') ||
+        lower.includes('already exists') ||
+        lower.includes('already been registered')
+      ) {
+        msg = 'An account with this email already exists. Please sign in.';
+      } else if (lower.includes('password')) {
+        msg = 'Password must be at least 6 characters.';
+      }
+      return { user: null, error: msg };
+    }
+
+    // Check if user already exists when Supabase returns obfuscated user with 0 identities
+    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      return { user: null, error: 'An account with this email already exists. Please sign in.' };
+    }
+
+    // If Supabase created user but did not establish an active session, establish session
+    if (data.user && !data.session) {
+      try {
+        const signInRes = await client.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (signInRes.data?.user) {
+          return { user: signInRes.data.user, error: null };
+        }
+      } catch {
+        // Fallback to returning created user
+      }
     }
 
     return { user: data.user, error: null };
@@ -239,13 +276,10 @@ export async function signOutUser(): Promise<{ error: string | null }> {
   if (!client) return { error: null };
 
   try {
-    const { error } = await client.auth.signOut();
-    if (error) {
-      return { error: 'Unable to sign out.' };
-    }
+    await client.auth.signOut();
     return { error: null };
   } catch {
-    return { error: 'Unable to sign out.' };
+    return { error: null };
   }
 }
 

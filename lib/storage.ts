@@ -12,6 +12,18 @@ const STORAGE_KEYS = {
   SETTINGS: 'salah_tracker_settings_v2',
 };
 
+function getItemsKey(userId?: string): string {
+  return userId ? `salah_tracker_items_${userId}` : STORAGE_KEYS.SALAH_ITEMS;
+}
+
+function getLogsKey(userId?: string): string {
+  return userId ? `salah_tracker_logs_${userId}` : STORAGE_KEYS.DAY_LOGS;
+}
+
+function getSettingsKey(userId?: string): string {
+  return userId ? `salah_tracker_settings_${userId}` : STORAGE_KEYS.SETTINGS;
+}
+
 export const DEFAULT_SALAH_ITEMS: SalahItem[] = [
   { id: 'fajr-default', name: 'Fajr', arabicName: 'الفجر', time: '', order: 1, createdAt: 1700000000000 },
   { id: 'dhuhr-default', name: 'Dhuhr', arabicName: 'الظهر', time: '', order: 2, createdAt: 1700000000001 },
@@ -88,12 +100,13 @@ export function formatTimeDisplay(timeStr: string, format: '12h' | '24h' = '12h'
   return `${formattedH}:${m} ${ampm}`;
 }
 
-export function loadSalahItems(): SalahItem[] {
+export function loadSalahItems(userId?: string): SalahItem[] {
   if (typeof window === 'undefined') return DEFAULT_SALAH_ITEMS;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.SALAH_ITEMS);
+    const key = getItemsKey(userId);
+    const raw = localStorage.getItem(key);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.SALAH_ITEMS, JSON.stringify(DEFAULT_SALAH_ITEMS));
+      localStorage.setItem(key, JSON.stringify(DEFAULT_SALAH_ITEMS));
       return DEFAULT_SALAH_ITEMS;
     }
     return JSON.parse(raw);
@@ -102,10 +115,10 @@ export function loadSalahItems(): SalahItem[] {
   }
 }
 
-export function saveSalahItems(items: SalahItem[]): void {
+export function saveSalahItems(items: SalahItem[], userId?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.SALAH_ITEMS, JSON.stringify(items));
+    localStorage.setItem(getItemsKey(userId), JSON.stringify(items));
   } catch (err) {
     console.error('Failed to save items', err);
   }
@@ -125,10 +138,10 @@ export function parseDayRecord(raw: unknown): DayStatusRecord {
   return { prayed: [], missed: [] };
 }
 
-export function loadDayLogs(): Record<string, DayStatusRecord> {
+export function loadDayLogs(userId?: string): Record<string, DayStatusRecord> {
   if (typeof window === 'undefined') return {};
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.DAY_LOGS);
+    const raw = localStorage.getItem(getLogsKey(userId));
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     const result: Record<string, DayStatusRecord> = {};
@@ -141,15 +154,24 @@ export function loadDayLogs(): Record<string, DayStatusRecord> {
   }
 }
 
-export function saveDayLog(dateKey: string, status: DayStatusRecord | string[]): void {
+export function saveDayLog(dateKey: string, status: DayStatusRecord | string[], userId?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    const current = loadDayLogs();
+    const current = loadDayLogs(userId);
     const normalized = parseDayRecord(status);
     current[dateKey] = normalized;
-    localStorage.setItem(STORAGE_KEYS.DAY_LOGS, JSON.stringify(current));
+    localStorage.setItem(getLogsKey(userId), JSON.stringify(current));
   } catch (err) {
     console.error('Failed to save day log', err);
+  }
+}
+
+export function saveAllDayLogs(logs: Record<string, DayStatusRecord>, userId?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(getLogsKey(userId), JSON.stringify(logs));
+  } catch (err) {
+    console.error('Failed to save all day logs', err);
   }
 }
 
@@ -170,12 +192,12 @@ export function getNextSalahStatus(current: SalahStatus): SalahStatus {
   return 'not_recorded';
 }
 
-export function loadSettings(): AppSettings {
+export function loadSettings(userId?: string): AppSettings {
   if (typeof window === 'undefined') return DEFAULT_SETTINGS;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+    const raw = localStorage.getItem(getSettingsKey(userId));
     if (!raw) {
-      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(DEFAULT_SETTINGS));
+      localStorage.setItem(getSettingsKey(userId), JSON.stringify(DEFAULT_SETTINGS));
       return DEFAULT_SETTINGS;
     }
     return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
@@ -184,30 +206,30 @@ export function loadSettings(): AppSettings {
   }
 }
 
-export function saveSettings(settings: AppSettings): void {
+export function saveSettings(settings: AppSettings, userId?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    localStorage.setItem(getSettingsKey(userId), JSON.stringify(settings));
   } catch (err) {
     console.error('Failed to save settings', err);
   }
 }
 
-export function clearAllHistory(): void {
+export function clearAllHistory(userId?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.removeItem(STORAGE_KEYS.DAY_LOGS);
+    localStorage.removeItem(getLogsKey(userId));
   } catch (err) {
     console.error('Failed to clear history', err);
   }
 }
 
-export function resetToDefaults(): void {
+export function resetToDefaults(userId?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.SALAH_ITEMS, JSON.stringify(DEFAULT_SALAH_ITEMS));
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(DEFAULT_SETTINGS));
-    localStorage.removeItem(STORAGE_KEYS.DAY_LOGS);
+    localStorage.setItem(getItemsKey(userId), JSON.stringify(DEFAULT_SALAH_ITEMS));
+    localStorage.setItem(getSettingsKey(userId), JSON.stringify(DEFAULT_SETTINGS));
+    localStorage.removeItem(getLogsKey(userId));
   } catch (err) {
     console.error('Failed to reset defaults', err);
   }
