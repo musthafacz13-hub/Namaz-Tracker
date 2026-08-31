@@ -19,15 +19,15 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
       setErrorMessage('Please enter your email.');
       return false;
     }
 
     // Standard email regex format check
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(trimmedEmail)) {
+    if (!emailRegex.test(normalizedEmail)) {
       setErrorMessage('Please enter a valid email address.');
       return false;
     }
@@ -53,11 +53,11 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
     setErrorMessage(null);
     setSuccessMessage(null);
 
-    const trimmedEmail = email.trim();
+    const normalizedEmail = email.trim().toLowerCase();
 
     try {
       if (mode === 'signin') {
-        const { user, error } = await signInWithEmail(trimmedEmail, password);
+        const { user, error } = await signInWithEmail(normalizedEmail, password);
         if (error) {
           setErrorMessage(error);
           setLoading(false);
@@ -68,7 +68,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
           return;
         }
       } else {
-        const { user, error } = await signUpWithEmail(trimmedEmail, password);
+        const { user, error } = await signUpWithEmail(normalizedEmail, password);
         if (error) {
           setErrorMessage(error);
           setLoading(false);

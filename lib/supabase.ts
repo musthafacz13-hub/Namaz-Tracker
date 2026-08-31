@@ -15,7 +15,6 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 let supabaseInstance: SupabaseClient | null = null;
 
 export function getSupabaseClient(): SupabaseClient | null {
-  if (typeof window === 'undefined') return null;
   if (!supabaseUrl || !supabaseAnonKey) {
     return null;
   }
@@ -192,25 +191,29 @@ export async function signInWithEmail(
     return { user: null, error: 'Supabase client is not configured.' };
   }
 
+  const normalizedEmail = email.trim().toLowerCase();
+
   try {
     const { data, error } = await client.auth.signInWithPassword({
-      email,
+      email: normalizedEmail,
       password,
     });
 
     if (error) {
-      let msg = 'Unable to sign in. Please check your email and password.';
+      console.warn('[Supabase Auth sign-in failure]:', error.message);
+      let msg = 'Invalid email or password. Please try again.';
       const lower = error.message.toLowerCase();
-      if (lower.includes('invalid login credentials') || lower.includes('invalid credentials')) {
-        msg = 'Invalid email or password. Please try again.';
-      } else if (lower.includes('email not confirmed')) {
-        msg = 'Please verify your email address before signing in.';
+      if (lower.includes('email not confirmed')) {
+        msg = 'Please confirm your email before signing in.';
+      } else if (lower.includes('too many') || lower.includes('rate limit')) {
+        msg = 'Too many attempts. Please wait a moment and try again.';
       }
       return { user: null, error: msg };
     }
 
     return { user: data.user, error: null };
-  } catch {
+  } catch (err: any) {
+    console.warn('[Supabase Auth network error]:', err?.message);
     return { user: null, error: 'Unable to connect. Please check your internet connection.' };
   }
 }
@@ -224,13 +227,16 @@ export async function signUpWithEmail(
     return { user: null, error: 'Supabase client is not configured.' };
   }
 
+  const normalizedEmail = email.trim().toLowerCase();
+
   try {
     const { data, error } = await client.auth.signUp({
-      email,
+      email: normalizedEmail,
       password,
     });
 
     if (error) {
+      console.warn('[Supabase Auth sign-up failure]:', error.message);
       let msg = error.message;
       const lower = error.message.toLowerCase();
       if (
@@ -241,6 +247,8 @@ export async function signUpWithEmail(
         msg = 'An account with this email already exists. Please sign in.';
       } else if (lower.includes('password')) {
         msg = 'Password must be at least 6 characters.';
+      } else if (lower.includes('rate limit') || lower.includes('too many')) {
+        msg = 'Too many attempts. Please wait a moment and try again.';
       }
       return { user: null, error: msg };
     }
@@ -250,23 +258,9 @@ export async function signUpWithEmail(
       return { user: null, error: 'An account with this email already exists. Please sign in.' };
     }
 
-    // If Supabase created user but did not establish an active session, establish session
-    if (data.user && !data.session) {
-      try {
-        const signInRes = await client.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (signInRes.data?.user) {
-          return { user: signInRes.data.user, error: null };
-        }
-      } catch {
-        // Fallback to returning created user
-      }
-    }
-
     return { user: data.user, error: null };
-  } catch {
+  } catch (err: any) {
+    console.warn('[Supabase Auth sign-up error]:', err?.message);
     return { user: null, error: 'Unable to connect. Please check your internet connection.' };
   }
 }
@@ -276,9 +270,13 @@ export async function signOutUser(): Promise<{ error: string | null }> {
   if (!client) return { error: null };
 
   try {
-    await client.auth.signOut();
+    const { error } = await client.auth.signOut();
+    if (error) {
+      console.warn('[Supabase Auth sign-out error]:', error.message);
+    }
     return { error: null };
-  } catch {
+  } catch (err: any) {
+    console.warn('[Supabase Auth sign-out exception]:', err?.message);
     return { error: null };
   }
 }
