@@ -11,6 +11,7 @@ import { parseDayRecord } from './storage';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
+// Single persistent client instance initialized once
 let supabaseInstance: SupabaseClient | null = null;
 
 export function getSupabaseClient(): SupabaseClient | null {
@@ -24,6 +25,7 @@ export function getSupabaseClient(): SupabaseClient | null {
         auth: {
           persistSession: true,
           autoRefreshToken: true,
+          detectSessionInUrl: false, // Disables unnecessary URL hash/oauth parsing for email+password
         },
       });
     } catch (err) {
@@ -50,7 +52,7 @@ export async function fetchRemoteSalahItems(): Promise<{ data: SalahItem[] | nul
   try {
     const { data, error } = await client
       .from('salah_items')
-      .select('*')
+      .select('id, name, arabic_name, time, order, created_at, deleted_at')
       .order('order', { ascending: true });
 
     if (error) {
@@ -73,7 +75,7 @@ export async function fetchRemoteSalahItems(): Promise<{ data: SalahItem[] | nul
     }));
 
     return { data: items, error: null };
-  } catch (err) {
+  } catch {
     return { data: null, error: 'Network error while connecting to remote storage.' };
   }
 }
@@ -119,7 +121,7 @@ export async function fetchRemoteDayLogs(): Promise<{ data: Record<string, DaySt
   try {
     const { data, error } = await client
       .from('day_logs')
-      .select('*');
+      .select('date_key, prayed, missed');
 
     if (error) {
       return { data: null, error: 'Unable to load completion records from cloud.' };

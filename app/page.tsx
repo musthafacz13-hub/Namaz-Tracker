@@ -51,34 +51,13 @@ export default function Page() {
   const [currentDateKey, setCurrentDateKey] = useState<string>(() => getTodayKey());
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('home');
   const [currentUser, setCurrentUser] = useState<any | null>(null);
-  const [authInitialized, setAuthInitialized] = useState<boolean>(false);
+  const [authInitialized, setAuthInitialized] = useState<boolean>(() => !isSupabaseConfigured());
 
-  // Initialize auth session and listen for auth state changes
+  // Initialize auth session and listen for auth state changes without duplicate calls
   useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
     let isMounted = true;
-
-    async function initAuth() {
-      if (!isSupabaseConfigured()) {
-        if (isMounted) setAuthInitialized(true);
-        return;
-      }
-
-      try {
-        const user = await getCurrentSessionUser();
-        if (isMounted) {
-          setCurrentUser(user);
-          setAuthInitialized(true);
-        }
-      } catch {
-        if (isMounted) {
-          setCurrentUser(null);
-          setAuthInitialized(true);
-        }
-      }
-    }
-
-    initAuth();
-
     const unsubscribe = subscribeToAuthChanges((user) => {
       if (isMounted) {
         setCurrentUser(user);

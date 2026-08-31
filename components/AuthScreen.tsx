@@ -65,6 +65,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         }
         if (user) {
           onSuccess(user);
+          return;
         }
       } else {
         const { user, error } = await signUpWithEmail(trimmedEmail, password);
@@ -76,6 +77,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         if (user) {
           setSuccessMessage('Account created successfully.');
           onSuccess(user);
+          return;
         }
       }
     } catch {
@@ -84,7 +86,6 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
           ? 'Unable to sign in. Please check your email and password.'
           : 'Unable to create account. Please try again.'
       );
-    } finally {
       setLoading(false);
     }
   };
