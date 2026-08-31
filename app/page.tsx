@@ -19,6 +19,19 @@ import {
   DEFAULT_SALAH_ITEMS,
   DEFAULT_SETTINGS,
 } from '@/lib/storage';
+import {
+  CALENDAR_MIN_YEAR,
+  CALENDAR_MAX_YEAR,
+  parseDateKey,
+  formatToDateKey,
+} from '@/lib/calendar';
+import {
+  fetchRemoteSalahItems,
+  syncRemoteSalahItems,
+  fetchRemoteDayLogs,
+  syncRemoteDayLog,
+  isSupabaseConfigured,
+} from '@/lib/supabase';
 import LoadingScreen from '@/components/LoadingScreen';
 import HomeScreen from '@/components/HomeScreen';
 import EditScreen from '@/components/EditScreen';
@@ -34,10 +47,48 @@ export default function Page() {
   const [currentDateKey, setCurrentDateKey] = useState<string>(() => getTodayKey());
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('home');
 
-  // Sync state changes with storage
+  // Hydrate from Supabase on initial load if configured
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
+    let isMounted = true;
+    async function hydrateCloudData() {
+      try {
+        const [remoteItems, remoteLogs] = await Promise.all([
+          fetchRemoteSalahItems(),
+          fetchRemoteDayLogs(),
+        ]);
+
+        if (isMounted) {
+          if (remoteItems.data && remoteItems.data.length > 0) {
+            setSalahItems(remoteItems.data);
+            saveSalahItems(remoteItems.data);
+          }
+          if (remoteLogs.data && Object.keys(remoteLogs.data).length > 0) {
+            setDayLogs((prev) => {
+              const merged = { ...prev, ...remoteLogs.data };
+              return merged;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Silent fallback to local storage:', err);
+      }
+    }
+
+    hydrateCloudData();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Sync state changes with storage and cloud
   const handleUpdateSalahItems = (newItems: SalahItem[]) => {
     setSalahItems(newItems);
     saveSalahItems(newItems);
+    if (isSupabaseConfigured()) {
+      syncRemoteSalahItems(newItems).catch(() => {});
+    }
   };
 
   const handleSetSalahStatus = useCallback(
@@ -56,6 +107,9 @@ export default function Page() {
       const newLogs = { ...dayLogs, [dateKey]: updatedRec };
       setDayLogs(newLogs);
       saveDayLog(dateKey, updatedRec);
+      if (isSupabaseConfigured()) {
+        syncRemoteDayLog(dateKey, updatedRec).catch(() => {});
+      }
     },
     [currentDateKey, dayLogs]
   );
@@ -75,13 +129,24 @@ export default function Page() {
   };
 
   const handleChangeDate = (delta: number) => {
-    const [year, month, day] = currentDateKey.split('-').map(Number);
+    const { year, month, day } = parseDateKey(currentDateKey);
     const date = new Date(year, month - 1, day);
     date.setDate(date.getDate() + delta);
-    const newY = date.getFullYear();
-    const newM = String(date.getMonth() + 1).padStart(2, '0');
-    const newD = String(date.getDate()).padStart(2, '0');
-    setCurrentDateKey(`${newY}-${newM}-${newD}`);
+    let newY = date.getFullYear();
+    let newM = date.getMonth() + 1;
+    let newD = date.getDate();
+
+    // Clamp within 2026-01-01 and 2045-12-31 bounds
+    if (newY < CALENDAR_MIN_YEAR) {
+      newY = CALENDAR_MIN_YEAR;
+      newM = 1;
+      newD = 1;
+    } else if (newY > CALENDAR_MAX_YEAR) {
+      newY = CALENDAR_MAX_YEAR;
+      newM = 12;
+      newD = 31;
+    }
+    setCurrentDateKey(formatToDateKey(newY, newM, newD));
   };
 
   const handleResetDate = () => {

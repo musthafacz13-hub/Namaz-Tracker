@@ -40,19 +40,35 @@ export default function EditScreen({
   const [editTime, setEditTime] = useState('');
   const [formFeedback, setFormFeedback] = useState<string | null>(null);
 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const activeItems = salahItems
     .filter((item) => !item.deletedAt)
     .sort((a, b) => a.order - b.order);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    setErrorMessage(null);
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setErrorMessage('PLEASE ENTER A PRAYER NAME');
+      return;
+    }
+
+    // Check for duplicate in active routine
+    const isDuplicate = activeItems.some(
+      (item) => item.name.toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (isDuplicate) {
+      setErrorMessage(`"${trimmedName.toUpperCase()}" IS ALREADY IN YOUR ROUTINE`);
+      return;
+    }
 
     const matchedPreset = COMMON_PRESETS.find(
-      (p) => p.name.toLowerCase() === name.trim().toLowerCase()
+      (p) => p.name.toLowerCase() === trimmedName.toLowerCase()
     );
 
-    onAddSalah(name.trim(), time, matchedPreset?.arabic);
+    onAddSalah(trimmedName, time, matchedPreset?.arabic);
     setName('');
     setTime('');
     setFormFeedback('ADDED TO ROUTINE');
@@ -61,12 +77,25 @@ export default function EditScreen({
 
   const handleSelectPreset = (preset: { name: string; arabic?: string }) => {
     setName(preset.name);
+    setErrorMessage(null);
   };
 
   const handleSaveInlineEdit = (id: string) => {
-    if (!editName.trim()) return;
-    onUpdateSalah(id, { name: editName.trim(), time: editTime });
+    const trimmed = editName.trim();
+    if (!trimmed) return;
+
+    // Check if another active item has this name
+    const isDuplicate = activeItems.some(
+      (item) => item.id !== id && item.name.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (isDuplicate) {
+      setErrorMessage(`"${trimmed.toUpperCase()}" IS ALREADY IN USE`);
+      return;
+    }
+
+    onUpdateSalah(id, { name: trimmed, time: editTime });
     setEditingId(null);
+    setErrorMessage(null);
   };
 
   return (
@@ -140,6 +169,12 @@ export default function EditScreen({
             className="w-full bg-transparent border-b-2 border-black py-2.5 text-xl font-mono font-bold text-black focus:outline-none focus:border-b-4 transition-all"
           />
         </div>
+
+        {errorMessage && (
+          <div className="p-3 border border-black bg-neutral-100 text-black text-xs font-mono font-bold tracking-wider uppercase text-center">
+            {errorMessage}
+          </div>
+        )}
 
         {/* Full-width, solid black button with white text: "+ ADD TO TRACKER" */}
         <button
