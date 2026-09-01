@@ -1,6 +1,15 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { SalahItem, DayStatusRecord } from './types';
-import { parseDayRecord } from './storage';
+import {
+  DayStatusRecord,
+  SalahStatus,
+  PrayerKey,
+  SupabaseDayLogRow,
+} from './types';
+import {
+  fromDbPrayerStatus,
+  toDbPrayerStatus,
+  parseDayRecord,
+} from './storage';
 
 /**
  * Client-safe Supabase Integration
@@ -24,7 +33,7 @@ export function getSupabaseClient(): SupabaseClient | null {
         auth: {
           persistSession: true,
           autoRefreshToken: true,
-          detectSessionInUrl: false, // Disables unnecessary URL hash/oauth parsing for email+password
+          detectSessionInUrl: false,
         },
       });
     } catch (err) {
@@ -40,143 +49,109 @@ export function isSupabaseConfigured(): boolean {
 }
 
 /**
- * Fetch Salah Items from Supabase
+ * Fetch all Day Logs for the authenticated user from Supabase `day_logs` table
  */
-export async function fetchRemoteSalahItems(): Promise<{ data: SalahItem[] | null; error: string | null }> {
-  const client = getSupabaseClient();
-  if (!client) {
-    return { data: null, error: null }; // Local fallback
-  }
-
-  try {
-    const { data, error } = await client
-      .from('salah_items')
-      .select('id, name, arabic_name, time, order, created_at, deleted_at')
-      .order('order', { ascending: true });
-
-    if (error) {
-      // User-friendly error message, never show raw postgres error
-      return { data: null, error: 'Unable to load your remote Salah routine.' };
-    }
-
-    if (!data || data.length === 0) {
-      return { data: null, error: null };
-    }
-
-    const items: SalahItem[] = data.map((d: any) => ({
-      id: d.id,
-      name: d.name,
-      arabicName: d.arabic_name || d.arabicName || undefined,
-      time: d.time || '',
-      order: d.order || 0,
-      createdAt: typeof d.created_at === 'string' ? new Date(d.created_at).getTime() : (d.createdAt || Date.now()),
-      deletedAt: d.deleted_at ? (typeof d.deleted_at === 'string' ? new Date(d.deleted_at).getTime() : d.deletedAt) : null,
-    }));
-
-    return { data: items, error: null };
-  } catch {
-    return { data: null, error: 'Network error while connecting to remote storage.' };
-  }
-}
-
-/**
- * Upsert / sync Salah Items to Supabase
- */
-export async function syncRemoteSalahItems(items: SalahItem[]): Promise<{ success: boolean; error: string | null }> {
-  const client = getSupabaseClient();
-  if (!client) return { success: true, error: null };
-
-  try {
-    const rows = items.map((item) => ({
-      id: item.id,
-      name: item.name,
-      arabic_name: item.arabicName || null,
-      time: item.time || '',
-      order: item.order,
-      deleted_at: item.deletedAt ? new Date(item.deletedAt).toISOString() : null,
-    }));
-
-    const { error } = await client
-      .from('salah_items')
-      .upsert(rows, { onConflict: 'id' });
-
-    if (error) {
-      return { success: false, error: 'Unable to save your Salah changes to cloud.' };
-    }
-
-    return { success: true, error: null };
-  } catch {
-    return { success: false, error: 'Offline: Changes saved locally.' };
-  }
-}
-
-/**
- * Fetch Day Logs from Supabase
- */
-export async function fetchRemoteDayLogs(): Promise<{ data: Record<string, DayStatusRecord> | null; error: string | null }> {
+export async function fetchRemoteDayLogs(): Promise<{
+  data: Record<string, DayStatusRecord> | null;
+  error: string | null;
+}> {
   const client = getSupabaseClient();
   if (!client) return { data: null, error: null };
+
+  const user = await getCurrentSessionUser();
+  if (!user) return { data: null, error: null };
 
   try {
     const { data, error } = await client
       .from('day_logs')
-      .select('date_key, prayed, missed');
+      .select('id, user_id, date, fajr, dhuhr, asr, maghrib, isha')
+      .eq('user_id', user.id);
 
     if (error) {
-      return { data: null, error: 'Unable to load completion records from cloud.' };
+      console.warn('[Supabase fetchRemoteDayLogs error]:', error.message);
+      return { data: null, error: 'Unable to load prayer records from cloud.' };
     }
 
     if (!data || data.length === 0) {
-      return { data: null, error: null };
+      return { data: {}, error: null };
     }
 
     const logs: Record<string, DayStatusRecord> = {};
     data.forEach((row: any) => {
-      if (row.date_key) {
-        logs[row.date_key] = parseDayRecord({
-          prayed: row.prayed || [],
-          missed: row.missed || [],
+      if (row.date) {
+        logs[row.date] = parseDayRecord({
+          fajr: row.fajr,
+          dhuhr: row.dhuhr,
+          asr: row.asr,
+          maghrib: row.maghrib,
+          isha: row.isha,
         });
       }
     });
 
     return { data: logs, error: null };
-  } catch {
-    return { data: null, error: 'Network error while loading logs.' };
+  } catch (err: any) {
+    console.warn('[Supabase fetchRemoteDayLogs exception]:', err?.message);
+    return { data: null, error: 'Network error while loading prayer records.' };
   }
 }
 
 /**
- * Sync single Day Log to Supabase
+ * Sync single Day Log row to Supabase `day_logs` table
+ * Uses unique (user_id, date) constraint.
  */
 export async function syncRemoteDayLog(
-  dateKey: string,
+  date: string,
   record: DayStatusRecord
 ): Promise<{ success: boolean; error: string | null }> {
   const client = getSupabaseClient();
   if (!client) return { success: true, error: null };
 
+  const user = await getCurrentSessionUser();
+  if (!user) return { success: false, error: 'User is not authenticated' };
+
   try {
+    const payload: SupabaseDayLogRow = {
+      user_id: user.id,
+      date: date,
+      fajr: toDbPrayerStatus(record.fajr),
+      dhuhr: toDbPrayerStatus(record.dhuhr),
+      asr: toDbPrayerStatus(record.asr),
+      maghrib: toDbPrayerStatus(record.maghrib),
+      isha: toDbPrayerStatus(record.isha),
+      updated_at: new Date().toISOString(),
+    };
+
     const { error } = await client
       .from('day_logs')
-      .upsert(
-        {
-          date_key: dateKey,
-          prayed: record.prayed,
-          missed: record.missed,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'date_key' }
-      );
+      .upsert(payload, { onConflict: 'user_id,date' });
 
     if (error) {
-      return { success: false, error: 'Failed to sync log to cloud.' };
+      console.warn('[Supabase syncRemoteDayLog error]:', error.message);
+      return { success: false, error: 'Failed to sync prayer record to cloud.' };
     }
 
     return { success: true, error: null };
-  } catch {
+  } catch (err: any) {
+    console.warn('[Supabase syncRemoteDayLog exception]:', err?.message);
     return { success: false, error: 'Offline: Saved locally.' };
   }
+}
+
+/**
+ * Update a specific prayer column in `day_logs` without overwriting the other four prayers
+ */
+export async function updateRemotePrayerStatus(
+  date: string,
+  prayer: PrayerKey,
+  status: SalahStatus,
+  currentRecord: DayStatusRecord
+): Promise<{ success: boolean; error: string | null }> {
+  const updatedRecord = {
+    ...currentRecord,
+    [prayer]: status,
+  };
+  return syncRemoteDayLog(date, parseDayRecord(updatedRecord));
 }
 
 /**
@@ -201,12 +176,16 @@ export async function signInWithEmail(
 
     if (error) {
       console.warn('[Supabase Auth sign-in failure]:', error.message);
-      let msg = 'Invalid email or password. Please try again.';
+      let msg = error.message;
       const lower = error.message.toLowerCase();
-      if (lower.includes('email not confirmed')) {
+      if (lower.includes('invalid login credentials') || lower.includes('invalid credentials')) {
+        msg = 'Invalid email or password. Please try again.';
+      } else if (lower.includes('email not confirmed')) {
         msg = 'Please confirm your email before signing in.';
       } else if (lower.includes('too many') || lower.includes('rate limit')) {
         msg = 'Too many attempts. Please wait a moment and try again.';
+      } else if (lower.includes('user not found')) {
+        msg = 'No account found with this email.';
       }
       return { user: null, error: msg };
     }

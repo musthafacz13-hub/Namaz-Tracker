@@ -1,15 +1,22 @@
-import { SalahItem, DayLog, AppSettings, DayStatusRecord, SalahStatus } from './types';
 import {
-  getDaysInMonth,
-  formatToDateKey,
+  SalahItem,
+  AppSettings,
+  DayStatusRecord,
+  SalahStatus,
+  PrayerKey,
+  DbPrayerStatus,
+} from './types';
+import {
   parseDateKey,
   getDeviceTodayKey,
 } from './calendar';
 
+export const PRAYER_KEYS: PrayerKey[] = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
+
 const STORAGE_KEYS = {
-  SALAH_ITEMS: 'salah_tracker_items_v2',
-  DAY_LOGS: 'salah_tracker_logs_v2',
-  SETTINGS: 'salah_tracker_settings_v2',
+  SALAH_ITEMS: 'salah_tracker_items_v3',
+  DAY_LOGS: 'salah_tracker_logs_v3',
+  SETTINGS: 'salah_tracker_settings_v3',
 };
 
 function getItemsKey(userId?: string): string {
@@ -25,11 +32,11 @@ function getSettingsKey(userId?: string): string {
 }
 
 export const DEFAULT_SALAH_ITEMS: SalahItem[] = [
-  { id: 'fajr-default', name: 'Fajr', arabicName: 'الفجر', time: '', order: 1, createdAt: 1700000000000 },
-  { id: 'dhuhr-default', name: 'Dhuhr', arabicName: 'الظهر', time: '', order: 2, createdAt: 1700000000001 },
-  { id: 'asr-default', name: 'Asr', arabicName: 'العصر', time: '', order: 3, createdAt: 1700000000002 },
-  { id: 'maghrib-default', name: 'Maghrib', arabicName: 'المغرب', time: '', order: 4, createdAt: 1700000000003 },
-  { id: 'isha-default', name: 'Isha', arabicName: 'العشاء', time: '', order: 5, createdAt: 1700000000004 },
+  { id: 'fajr', name: 'Fajr', arabicName: 'الفجر', time: '', order: 1, createdAt: 1700000000000 },
+  { id: 'dhuhr', name: 'Dhuhr', arabicName: 'الظهر', time: '', order: 2, createdAt: 1700000000001 },
+  { id: 'asr', name: 'Asr', arabicName: 'العصر', time: '', order: 3, createdAt: 1700000000002 },
+  { id: 'maghrib', name: 'Maghrib', arabicName: 'المغرب', time: '', order: 4, createdAt: 1700000000003 },
+  { id: 'isha', name: 'Isha', arabicName: 'العشاء', time: '', order: 5, createdAt: 1700000000004 },
 ];
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -43,6 +50,76 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 export function getTodayKey(): string {
   return getDeviceTodayKey();
+}
+
+export function normalizePrayerKey(id: string): PrayerKey | null {
+  if (!id) return null;
+  const lower = id.toLowerCase().replace(/[-_](default|\d+)$/i, '').trim();
+  if (lower === 'fajr') return 'fajr';
+  if (lower === 'dhuhr' || lower === 'zuhr' || lower === 'duhr') return 'dhuhr';
+  if (lower === 'asr') return 'asr';
+  if (lower === 'maghrib' || lower === 'magrib') return 'maghrib';
+  if (lower === 'isha' || lower === 'ishaa') return 'isha';
+  return null;
+}
+
+export function toDbPrayerStatus(status: SalahStatus | undefined): DbPrayerStatus {
+  if (status === 'prayed') return 'PRAYED';
+  if (status === 'missed') return 'MISSED';
+  return 'NOT_RECORDED';
+}
+
+export function fromDbPrayerStatus(status: DbPrayerStatus | string | undefined): SalahStatus {
+  if (!status) return 'not_recorded';
+  const upper = String(status).toUpperCase();
+  if (upper === 'PRAYED') return 'prayed';
+  if (upper === 'MISSED') return 'missed';
+  return 'not_recorded';
+}
+
+export function createEmptyDayRecord(): DayStatusRecord {
+  return {
+    fajr: 'not_recorded',
+    dhuhr: 'not_recorded',
+    asr: 'not_recorded',
+    maghrib: 'not_recorded',
+    isha: 'not_recorded',
+    prayed: [],
+    missed: [],
+  };
+}
+
+export function parseDayRecord(raw: unknown): DayStatusRecord {
+  const record: DayStatusRecord = createEmptyDayRecord();
+  if (!raw || typeof raw !== 'object') return record;
+
+  const obj = raw as Record<string, unknown>;
+
+  for (const key of PRAYER_KEYS) {
+    if (key in obj && typeof obj[key] === 'string') {
+      record[key] = fromDbPrayerStatus(obj[key] as string);
+    }
+  }
+
+  // Handle legacy array format or legacy { prayed: [...], missed: [...] }
+  if (Array.isArray(obj.prayed)) {
+    for (const item of obj.prayed) {
+      const pKey = normalizePrayerKey(String(item));
+      if (pKey) record[pKey] = 'prayed';
+    }
+  }
+  if (Array.isArray(obj.missed)) {
+    for (const item of obj.missed) {
+      const pKey = normalizePrayerKey(String(item));
+      if (pKey) record[pKey] = 'missed';
+    }
+  }
+
+  // Populate computed arrays
+  record.prayed = PRAYER_KEYS.filter((k) => record[k] === 'prayed');
+  record.missed = PRAYER_KEYS.filter((k) => record[k] === 'missed');
+
+  return record;
 }
 
 export function formatDateDisplay(dateKey: string): {
@@ -78,11 +155,6 @@ export function formatDateDisplay(dateKey: string): {
   return { title, subtitle, dayOfWeek, formattedMonthDay };
 }
 
-export function formatMonthYear(year: number, month: number): string {
-  const date = new Date(year, month - 1, 1);
-  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }).toUpperCase();
-}
-
 export function formatTimeDisplay(timeStr: string, format: '12h' | '24h' = '12h'): string {
   if (!timeStr) return '';
   if (format === '24h') return timeStr;
@@ -109,7 +181,11 @@ export function loadSalahItems(userId?: string): SalahItem[] {
       localStorage.setItem(key, JSON.stringify(DEFAULT_SALAH_ITEMS));
       return DEFAULT_SALAH_ITEMS;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed;
+    }
+    return DEFAULT_SALAH_ITEMS;
   } catch {
     return DEFAULT_SALAH_ITEMS;
   }
@@ -122,20 +198,6 @@ export function saveSalahItems(items: SalahItem[], userId?: string): void {
   } catch (err) {
     console.error('Failed to save items', err);
   }
-}
-
-export function parseDayRecord(raw: unknown): DayStatusRecord {
-  if (!raw) return { prayed: [], missed: [] };
-  if (Array.isArray(raw)) {
-    return { prayed: raw, missed: [] };
-  }
-  if (typeof raw === 'object') {
-    const obj = raw as Record<string, unknown>;
-    const prayed = Array.isArray(obj.prayed) ? (obj.prayed as string[]) : [];
-    const missed = Array.isArray(obj.missed) ? (obj.missed as string[]) : [];
-    return { prayed, missed };
-  }
-  return { prayed: [], missed: [] };
 }
 
 export function loadDayLogs(userId?: string): Record<string, DayStatusRecord> {
@@ -154,7 +216,11 @@ export function loadDayLogs(userId?: string): Record<string, DayStatusRecord> {
   }
 }
 
-export function saveDayLog(dateKey: string, status: DayStatusRecord | string[], userId?: string): void {
+export function saveDayLog(
+  dateKey: string,
+  status: DayStatusRecord | Record<string, unknown>,
+  userId?: string
+): void {
   if (typeof window === 'undefined') return;
   try {
     const current = loadDayLogs(userId);
@@ -176,13 +242,15 @@ export function saveAllDayLogs(logs: Record<string, DayStatusRecord>, userId?: s
 }
 
 export function getSalahStatusForDay(
-  dayLogs: Record<string, DayStatusRecord | string[]>,
+  dayLogs: Record<string, DayStatusRecord | unknown>,
   dateKey: string,
   salahId: string
 ): SalahStatus {
   const dayRec = parseDayRecord(dayLogs[dateKey]);
-  if (dayRec.prayed.includes(salahId)) return 'prayed';
-  if (dayRec.missed.includes(salahId)) return 'missed';
+  const pKey = normalizePrayerKey(salahId);
+  if (pKey) {
+    return dayRec[pKey];
+  }
   return 'not_recorded';
 }
 
@@ -235,29 +303,29 @@ export function resetToDefaults(userId?: string): void {
   }
 }
 
-export function exportAllData(): string {
+export function exportAllData(userId?: string): string {
   if (typeof window === 'undefined') return '{}';
   const data = {
-    salahItems: loadSalahItems(),
-    dayLogs: loadDayLogs(),
-    settings: loadSettings(),
+    salahItems: loadSalahItems(userId),
+    dayLogs: loadDayLogs(userId),
+    settings: loadSettings(userId),
     exportedAt: new Date().toISOString(),
   };
   return JSON.stringify(data, null, 2);
 }
 
-export function importData(jsonString: string): boolean {
+export function importData(jsonString: string, userId?: string): boolean {
   if (typeof window === 'undefined') return false;
   try {
     const data = JSON.parse(jsonString);
     if (data.salahItems && Array.isArray(data.salahItems)) {
-      saveSalahItems(data.salahItems);
+      saveSalahItems(data.salahItems, userId);
     }
     if (data.dayLogs && typeof data.dayLogs === 'object') {
-      localStorage.setItem(STORAGE_KEYS.DAY_LOGS, JSON.stringify(data.dayLogs));
+      saveAllDayLogs(data.dayLogs, userId);
     }
     if (data.settings && typeof data.settings === 'object') {
-      saveSettings(data.settings);
+      saveSettings(data.settings, userId);
     }
     return true;
   } catch (err) {

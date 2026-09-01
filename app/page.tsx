@@ -17,6 +17,7 @@ import {
   parseDayRecord,
   getSalahStatusForDay,
   getNextSalahStatus,
+  normalizePrayerKey,
   DEFAULT_SALAH_ITEMS,
   DEFAULT_SETTINGS,
 } from '@/lib/storage';
@@ -27,12 +28,9 @@ import {
   formatToDateKey,
 } from '@/lib/calendar';
 import {
-  fetchRemoteSalahItems,
-  syncRemoteSalahItems,
   fetchRemoteDayLogs,
   syncRemoteDayLog,
   isSupabaseConfigured,
-  getCurrentSessionUser,
   subscribeToAuthChanges,
   signOutUser,
 } from '@/lib/supabase';
@@ -46,13 +44,13 @@ import AuthScreen from '@/components/AuthScreen';
 import BottomNav from '@/components/BottomNav';
 
 export default function Page() {
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [authInitialized, setAuthInitialized] = useState<boolean>(() => !isSupabaseConfigured());
   const [salahItems, setSalahItems] = useState<SalahItem[]>(() => loadSalahItems());
-  const [dayLogs, setDayLogs] = useState<Record<string, DayStatusRecord>>(() => loadDayLogs());
+  const [dayLogs, setDayLogs] = useState<Record<string, DayStatusRecord>>({});
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [currentDateKey, setCurrentDateKey] = useState<string>(() => getTodayKey());
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('home');
-  const [currentUser, setCurrentUser] = useState<any | null>(null);
-  const [authInitialized, setAuthInitialized] = useState<boolean>(() => !isSupabaseConfigured());
 
   // Initialize auth session and listen for auth state changes without duplicate calls
   useEffect(() => {
@@ -72,37 +70,33 @@ export default function Page() {
     };
   }, []);
 
-  // Hydrate from Supabase on initial load or user change if configured
+  // Hydrate from Supabase on initial load or user change
   useEffect(() => {
     if (!isSupabaseConfigured() || !currentUser) return;
 
     let isMounted = true;
+    const userId = currentUser.id;
+
     async function hydrateCloudData() {
+      // Load local user-scoped cache immediately to prevent blank flash
+      const localCached = loadDayLogs(userId);
+      if (isMounted) {
+        setDayLogs(localCached);
+        setSalahItems(loadSalahItems(userId));
+        setSettings(loadSettings(userId));
+      }
+
       try {
-        const [remoteItems, remoteLogs] = await Promise.all([
-          fetchRemoteSalahItems(),
-          fetchRemoteDayLogs(),
-        ]);
+        const remoteLogs = await fetchRemoteDayLogs();
 
         if (isMounted) {
-          if (remoteItems.data && remoteItems.data.length > 0) {
-            setSalahItems(remoteItems.data);
-            saveSalahItems(remoteItems.data, currentUser.id);
-          } else {
-            // New user account with no items yet in cloud: initialize defaults and sync
-            const initialItems = DEFAULT_SALAH_ITEMS;
-            setSalahItems(initialItems);
-            saveSalahItems(initialItems, currentUser.id);
-            syncRemoteSalahItems(initialItems).catch(() => {});
-          }
-
           if (remoteLogs.data && Object.keys(remoteLogs.data).length > 0) {
             setDayLogs(remoteLogs.data);
-            saveAllDayLogs(remoteLogs.data, currentUser.id);
-          } else {
-            // New user account has no logs yet: start with completely clean isolated logs
+            saveAllDayLogs(remoteLogs.data, userId);
+          } else if (Object.keys(localCached).length === 0) {
+            // New user account has no logs yet: start with clean isolated logs
             setDayLogs({});
-            saveAllDayLogs({}, currentUser.id);
+            saveAllDayLogs({}, userId);
           }
         }
       } catch (err) {
@@ -128,24 +122,27 @@ export default function Page() {
   const handleUpdateSalahItems = (newItems: SalahItem[]) => {
     setSalahItems(newItems);
     saveSalahItems(newItems, currentUser?.id);
-    if (isSupabaseConfigured() && currentUser) {
-      syncRemoteSalahItems(newItems).catch(() => {});
-    }
   };
 
   const handleSetSalahStatus = useCallback(
     (id: string, newStatus: SalahStatus, dateKey: string = currentDateKey) => {
+      const pKey = normalizePrayerKey(id);
+      if (!pKey) return;
+
       const currentRec = parseDayRecord(dayLogs[dateKey]);
-      const newPrayed = currentRec.prayed.filter((itemId) => itemId !== id);
-      const newMissed = currentRec.missed.filter((itemId) => itemId !== id);
+      const updatedRec: DayStatusRecord = {
+        ...currentRec,
+        [pKey]: newStatus,
+        prayed: currentRec.prayed.filter((k) => k !== pKey),
+        missed: currentRec.missed.filter((k) => k !== pKey),
+      };
 
       if (newStatus === 'prayed') {
-        newPrayed.push(id);
+        updatedRec.prayed.push(pKey);
       } else if (newStatus === 'missed') {
-        newMissed.push(id);
+        updatedRec.missed.push(pKey);
       }
 
-      const updatedRec: DayStatusRecord = { prayed: newPrayed, missed: newMissed };
       const newLogs = { ...dayLogs, [dateKey]: updatedRec };
       setDayLogs(newLogs);
       saveDayLog(dateKey, updatedRec, currentUser?.id);
@@ -280,9 +277,6 @@ export default function Page() {
     setSalahItems(DEFAULT_SALAH_ITEMS);
     setDayLogs({});
     setSettings(DEFAULT_SETTINGS);
-    if (isSupabaseConfigured() && currentUser) {
-      syncRemoteSalahItems(DEFAULT_SALAH_ITEMS).catch(() => {});
-    }
   };
 
   // Notification watcher
