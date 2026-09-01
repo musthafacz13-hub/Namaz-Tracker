@@ -273,6 +273,58 @@ export async function signUpWithEmail(
 }
 
 /**
+ * Send 6-digit OTP to an email address via Supabase Auth (for signin or signup)
+ */
+export async function sendEmailOtp(
+  email: string
+): Promise<{ success: boolean; error: string | null }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, error: 'Supabase client is not configured.' };
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    const { error } = await client.auth.signInWithOtp({
+      email: normalizedEmail,
+      options: {
+        shouldCreateUser: true,
+      },
+    });
+
+    if (error) {
+      console.warn('[Supabase sendEmailOtp error]:', error.message);
+      const lower = error.message.toLowerCase();
+      if (lower.includes('rate limit') || lower.includes('too many') || lower.includes('wait')) {
+        return {
+          success: false,
+          error: 'Too many requests. Please wait a moment before trying again.',
+        };
+      }
+      if (lower.includes('network') || lower.includes('connection') || lower.includes('fetch')) {
+        return {
+          success: false,
+          error: 'Unable to connect. Please check your internet connection.',
+        };
+      }
+      return {
+        success: false,
+        error: error.message || 'Unable to send verification code. Please try again.',
+      };
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.warn('[Supabase sendEmailOtp exception]:', err?.message);
+    return {
+      success: false,
+      error: 'Unable to send verification code. Please check your internet connection.',
+    };
+  }
+}
+
+/**
  * Verify 6-digit Email OTP Token via Supabase Auth
  */
 export async function verifyEmailOtp(
@@ -292,21 +344,21 @@ export async function verifyEmailOtp(
   }
 
   try {
-    // Try signup OTP confirmation type
+    // Try email/magiclink OTP verification first (standard signInWithOtp flow)
     let res = await client.auth.verifyOtp({
       email: normalizedEmail,
       token: cleanToken,
-      type: 'signup',
+      type: 'email',
     });
 
-    // Fallback to email verification OTP type if signup type failed with non-expiry error
+    // Fallback to signup OTP confirmation type if 'email' type failed with non-expiry error
     if (res.error) {
       const lowerErr = res.error.message.toLowerCase();
       if (!lowerErr.includes('expired')) {
         const fallbackRes = await client.auth.verifyOtp({
           email: normalizedEmail,
           token: cleanToken,
-          type: 'email',
+          type: 'signup',
         });
         if (!fallbackRes.error) {
           res = fallbackRes;
@@ -368,6 +420,34 @@ export async function verifyEmailOtp(
       session: null,
       error: 'Unable to verify right now. Check your connection and try again.',
     };
+  }
+}
+
+/**
+ * Update user password after authenticated session or email OTP verification
+ */
+export async function updateUserPassword(
+  password: string
+): Promise<{ user: any; error: string | null }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { user: null, error: 'Supabase client is not configured.' };
+  }
+
+  try {
+    const { data, error } = await client.auth.updateUser({
+      password,
+    });
+
+    if (error) {
+      console.warn('[Supabase updateUser password error]:', error.message);
+      return { user: null, error: error.message || 'Unable to update password.' };
+    }
+
+    return { user: data.user, error: null };
+  } catch (err: any) {
+    console.warn('[Supabase updateUser password exception]:', err?.message);
+    return { user: null, error: 'Unable to update password. Please try again.' };
   }
 }
 
