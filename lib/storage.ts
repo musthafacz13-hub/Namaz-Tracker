@@ -287,6 +287,7 @@ export function clearAllHistory(userId?: string): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.removeItem(getLogsKey(userId));
+    clearPendingSyncDates(userId);
   } catch (err) {
     console.error('Failed to clear history', err);
   }
@@ -298,8 +299,57 @@ export function resetToDefaults(userId?: string): void {
     localStorage.setItem(getItemsKey(userId), JSON.stringify(DEFAULT_SALAH_ITEMS));
     localStorage.setItem(getSettingsKey(userId), JSON.stringify(DEFAULT_SETTINGS));
     localStorage.removeItem(getLogsKey(userId));
+    clearPendingSyncDates(userId);
   } catch (err) {
     console.error('Failed to reset defaults', err);
+  }
+}
+
+function getPendingKey(userId?: string): string {
+  return userId ? `salah_tracker_pending_${userId}` : 'salah_tracker_pending_v3';
+}
+
+export function getPendingSyncDates(userId?: string): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(getPendingKey(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addPendingSyncDate(dateKey: string, userId?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const current = getPendingSyncDates(userId);
+    if (!current.includes(dateKey)) {
+      current.push(dateKey);
+      localStorage.setItem(getPendingKey(userId), JSON.stringify(current));
+    }
+  } catch (err) {
+    console.error('Failed to add pending sync date', err);
+  }
+}
+
+export function removePendingSyncDate(dateKey: string, userId?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const current = getPendingSyncDates(userId).filter((d) => d !== dateKey);
+    localStorage.setItem(getPendingKey(userId), JSON.stringify(current));
+  } catch (err) {
+    console.error('Failed to remove pending sync date', err);
+  }
+}
+
+export function clearPendingSyncDates(userId?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(getPendingKey(userId));
+  } catch (err) {
+    console.error('Failed to clear pending sync dates', err);
   }
 }
 

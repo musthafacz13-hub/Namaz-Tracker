@@ -47,4 +47,26 @@ export interface AppSettings {
   hasSeenIntro: boolean;
 }
 
-export type ScreenType = 'home' | 'edit' | 'bin' | 'settings' | 'about' | 'loading';
+export type ScreenType = 'home' | 'consistency' | 'edit' | 'bin' | 'settings' | 'about' | 'loading';
+
+export interface MilestoneReward {
+  id: string;
+  days: number;
+  title: string;
+  subtitle: string;
+  description: string;
+  isUnlocked: boolean;
+  progressPercent: number;
+  currentDaysProgress: number;
+}
+
+export interface StreakStats {
+  currentStreak: number;
+  bestStreak: number;
+  consistencyPercentage: number;
+  totalCompletedDays: number;
+  totalRecordedDays: number;
+  totalPrayersPrayed: number;
+  totalPossiblePrayers: number;
+  milestones: MilestoneReward[];
+}

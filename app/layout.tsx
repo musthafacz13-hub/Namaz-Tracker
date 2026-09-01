@@ -4,6 +4,12 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Salah Tracker',
   description: 'An ultra-minimalist, distraction-free daily Salah and Namaz tracker featuring monochromatic brutalist aesthetics and manual prayer timing control.',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Salah Tracker',
+  },
   openGraph: {
     title: 'Salah Tracker',
     description: 'An ultra-minimalist, distraction-free daily Salah and Namaz tracker featuring monochromatic brutalist aesthetics and manual prayer timing control.',

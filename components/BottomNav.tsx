@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ScreenType } from '@/lib/types';
-import { LayoutGrid, PlusSquare, Trash2, SlidersHorizontal } from 'lucide-react';
+import { LayoutGrid, Flame, PlusSquare, Trash2, SlidersHorizontal } from 'lucide-react';
 
 interface BottomNavProps {
   currentScreen: ScreenType;
@@ -16,6 +16,11 @@ export default function BottomNav({ currentScreen, onNavigate, binCount = 0 }: B
       id: 'home',
       label: 'Home',
       icon: (active) => <LayoutGrid size={20} strokeWidth={active ? 2.5 : 1.75} />,
+    },
+    {
+      id: 'consistency',
+      label: 'Streak',
+      icon: (active) => <Flame size={20} strokeWidth={active ? 2.5 : 1.75} className={active ? 'fill-black' : ''} />,
     },
     {
       id: 'edit',

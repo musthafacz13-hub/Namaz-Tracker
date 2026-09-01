@@ -3,8 +3,6 @@
 import React, { useState, useRef } from 'react';
 import { AppSettings } from '@/lib/types';
 import {
-  ArrowRight,
-  ChevronLeft,
   Download,
   Upload,
   Trash2,
@@ -12,21 +10,22 @@ import {
   Volume2,
   Smartphone,
   Clock,
-  Sparkles,
   User,
   LogOut,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import { exportAllData, importData } from '@/lib/storage';
 
 interface SettingsScreenProps {
   settings: AppSettings;
-  currentUser?: any | null;
+  currentUser?: { email?: string; id?: string } | null;
   onSignOut: () => void;
   onUpdateSettings: (updates: Partial<AppSettings>) => void;
   onClearHistory: () => void;
-  onResetAllData: () => void;
-  onReplayIntro: () => void;
-  onNavigateToAbout: () => void;
+  onResetAllData?: () => void;
+  onReplayIntro?: () => void;
+  onNavigateToAbout?: () => void;
 }
 
 export default function SettingsScreen({
@@ -35,14 +34,9 @@ export default function SettingsScreen({
   onSignOut,
   onUpdateSettings,
   onClearHistory,
-  onResetAllData,
-  onReplayIntro,
-  onNavigateToAbout,
 }: SettingsScreenProps) {
-  const [activeSubView, setActiveSubView] = useState<
-    'notifications' | 'export' | 'clear' | null
-  >(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const showFeedback = (msg: string) => {
@@ -51,15 +45,19 @@ export default function SettingsScreen({
   };
 
   const handleExportJSON = () => {
-    const data = exportAllData();
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `salah-tracker-backup-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showFeedback('BACKUP EXPORTED SUCCESSFULLY');
+    try {
+      const data = exportAllData();
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `salah-tracker-backup-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showFeedback('BACKUP EXPORTED SUCCESSFULLY');
+    } catch {
+      showFeedback('EXPORT FAILED');
+    }
   };
 
   const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -70,369 +68,388 @@ export default function SettingsScreen({
     reader.onload = (event) => {
       const content = event.target?.result as string;
       if (content && importData(content)) {
-        showFeedback('DATA IMPORTED SUCCESSFULLY. REFRESHING...');
+        showFeedback('BACKUP IMPORTED. REFRESHING...');
         setTimeout(() => window.location.reload(), 1000);
       } else {
-        showFeedback('INVALID BACKUP FILE FORMAT');
+        showFeedback('INVALID BACKUP FILE');
       }
     };
     reader.readAsText(file);
   };
 
-  const requestNotificationPermission = async () => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      const permission = await Notification.requestPermission();
-      if (permission === 'granted') {
-        onUpdateSettings({ notificationsEnabled: true });
-        showFeedback('NOTIFICATIONS ENABLED');
+  const handleToggleNotifications = async () => {
+    if (!settings.notificationsEnabled) {
+      if (typeof window !== 'undefined' && 'Notification' in window) {
+        try {
+          const permission = await Notification.requestPermission();
+          if (permission === 'granted') {
+            onUpdateSettings({ notificationsEnabled: true });
+            showFeedback('PRAYER REMINDERS ENABLED');
+          } else {
+            onUpdateSettings({ notificationsEnabled: false });
+            showFeedback('PERMISSION DENIED IN BROWSER');
+          }
+        } catch {
+          showFeedback('NOTIFICATION REQUEST FAILED');
+        }
       } else {
-        onUpdateSettings({ notificationsEnabled: false });
-        showFeedback('PERMISSION DENIED IN BROWSER');
+        showFeedback('NOTIFICATIONS NOT SUPPORTED');
       }
     } else {
-      showFeedback('NOTIFICATIONS NOT SUPPORTED IN THIS BROWSER');
+      onUpdateSettings({ notificationsEnabled: false });
+      showFeedback('PRAYER REMINDERS DISABLED');
     }
   };
 
   return (
-    <div className="w-full max-w-xl mx-auto px-6 pt-10 pb-28 min-h-screen bg-white text-black">
-      {/* Header: "SETTINGS" */}
-      <div className="border-b border-black pb-4 mb-8 flex items-baseline justify-between">
-        <div>
-          <h1 className="text-4xl md:text-5xl font-black tracking-tight uppercase leading-none">
-            SETTINGS
-          </h1>
-          <p className="text-xs font-mono tracking-widest text-neutral-500 uppercase mt-2">
-            PREFERENCES & DATA MANAGEMENT
-          </p>
-        </div>
+    <div className="w-full max-w-lg mx-auto px-4 pt-6 pb-28 text-black selection:bg-black selection:text-white">
+      {/* Header */}
+      <header className="border-b border-black pb-4 mb-6">
+        <h1 className="text-xl font-black font-sans tracking-tight uppercase">
+          Settings
+        </h1>
+        <p className="text-xs font-mono text-neutral-500 uppercase tracking-wider mt-0.5">
+          Preferences & Account
+        </p>
+      </header>
 
-        {activeSubView && (
-          <button
-            onClick={() => setActiveSubView(null)}
-            className="flex items-center gap-1 border border-black px-3 py-1 text-xs font-bold uppercase tracking-wider hover:bg-black hover:text-white transition-colors"
-          >
-            <ChevronLeft size={14} strokeWidth={3} />
-            <span>BACK</span>
-          </button>
-        )}
-      </div>
-
+      {/* Temporary Feedback Notification */}
       {feedbackMsg && (
-        <div className="mb-6 p-3 bg-black text-white text-center font-mono text-xs font-bold tracking-wider">
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-6 px-4 py-2.5 bg-black text-white font-mono text-xs font-bold uppercase tracking-wider text-center"
+        >
           {feedbackMsg}
         </div>
       )}
 
-      {/* Main List Menu */}
-      {!activeSubView && (
-        <div className="divide-y divide-black border-t border-b border-black">
-          {/* Account / Sign Out Row */}
-          {currentUser && (
-            <div className="py-5 px-1 flex items-center justify-between">
+      <div className="space-y-8">
+        {/* ================================================== */}
+        {/* SECTION 1: ACCOUNT                                 */}
+        {/* ================================================== */}
+        <section aria-label="Account Settings">
+          <div className="border-b border-black pb-1.5 mb-3">
+            <h2 className="text-xs font-black font-mono tracking-widest text-neutral-500 uppercase">
+              ACCOUNT
+            </h2>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between py-2">
               <div className="flex items-center gap-3">
-                <User size={20} strokeWidth={2} />
-                <div className="flex flex-col">
-                  <span className="text-lg md:text-xl font-bold tracking-tight uppercase">
-                    Account
+                <div className="w-10 h-10 border border-black flex items-center justify-center shrink-0">
+                  <User size={18} strokeWidth={2} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-bold font-mono text-black truncate max-w-[200px] sm:max-w-xs">
+                    {currentUser?.email || 'Authenticated User'}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-black inline-block"></span>
+                    <span className="text-[11px] font-mono uppercase text-neutral-500 tracking-wider">
+                      Active
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <button
+              id="sign-out-btn"
+              onClick={onSignOut}
+              aria-label="Sign Out of Account"
+              className="w-full min-h-[44px] px-4 border border-black bg-white text-black text-xs font-mono font-bold uppercase tracking-wider hover:bg-black hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-black transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <LogOut size={15} strokeWidth={2.5} />
+              <span>SIGN OUT</span>
+            </button>
+          </div>
+        </section>
+
+        {/* ================================================== */}
+        {/* SECTION 2: PREFERENCES                             */}
+        {/* ================================================== */}
+        <section aria-label="Application Preferences">
+          <div className="border-b border-black pb-1.5 mb-3">
+            <h2 className="text-xs font-black font-mono tracking-widest text-neutral-500 uppercase">
+              PREFERENCES
+            </h2>
+          </div>
+
+          <div className="divide-y divide-neutral-200">
+            {/* Time Format */}
+            <div className="py-3.5 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Clock size={18} strokeWidth={2} className="text-neutral-700 shrink-0" />
+                <div>
+                  <span className="text-sm font-bold font-sans text-black block">
+                    Time Format
                   </span>
-                  <span className="text-xs font-mono text-neutral-500 truncate max-w-[200px] sm:max-w-xs">
-                    {currentUser.email}
+                  <span className="text-xs font-mono text-neutral-500">
+                    Display in 12-hour or 24-hour cycle
                   </span>
                 </div>
               </div>
-              <button
-                id="sign-out-btn"
-                onClick={onSignOut}
-                className="flex items-center gap-1.5 border border-black px-3 py-1.5 font-mono text-xs font-bold uppercase hover:bg-black hover:text-white transition-colors"
-              >
-                <LogOut size={13} strokeWidth={2.5} />
-                <span>SIGN OUT</span>
-              </button>
-            </div>
-          )}
 
-          {/* Notification Preferences */}
-          <button
-            id="menu-notifications"
-            onClick={() => setActiveSubView('notifications')}
-            className="w-full py-5 px-1 flex items-center justify-between text-left group hover:bg-neutral-100 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <Bell size={20} strokeWidth={2} />
-              <span className="text-lg md:text-xl font-bold tracking-tight uppercase">
-                Notification Preferences
-              </span>
-            </div>
-            <ArrowRight size={20} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" />
-          </button>
-
-          {/* Export Data */}
-          <button
-            id="menu-export"
-            onClick={() => setActiveSubView('export')}
-            className="w-full py-5 px-1 flex items-center justify-between text-left group hover:bg-neutral-100 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <Download size={20} strokeWidth={2} />
-              <span className="text-lg md:text-xl font-bold tracking-tight uppercase">
-                Export Data
-              </span>
-            </div>
-            <ArrowRight size={20} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" />
-          </button>
-
-          {/* Clear History */}
-          <button
-            id="menu-clear"
-            onClick={() => setActiveSubView('clear')}
-            className="w-full py-5 px-1 flex items-center justify-between text-left group hover:bg-neutral-100 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <Trash2 size={20} strokeWidth={2} />
-              <span className="text-lg md:text-xl font-bold tracking-tight uppercase">
-                Clear History
-              </span>
-            </div>
-            <ArrowRight size={20} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" />
-          </button>
-
-          {/* Sound & Haptic Feedback Toggle row */}
-          <div className="py-5 px-1 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Volume2 size={20} strokeWidth={2} />
-              <div className="flex flex-col">
-                <span className="text-lg font-bold tracking-tight uppercase">
-                  Sound Feedback
-                </span>
-                <span className="text-xs font-mono text-neutral-400">
-                  TACTILE MECHANICAL AUDIO TICK
-                </span>
-              </div>
-            </div>
-            <button
-              id="toggle-sound-btn"
-              onClick={() => onUpdateSettings({ soundEnabled: !settings.soundEnabled })}
-              className={`w-12 h-6 border-2 border-black flex items-center p-0.5 transition-colors ${
-                settings.soundEnabled ? 'bg-black justify-end' : 'bg-white justify-start'
-              }`}
-            >
-              <div
-                className={`w-4 h-4 ${
-                  settings.soundEnabled ? 'bg-white' : 'bg-black'
-                }`}
-              />
-            </button>
-          </div>
-
-          <div className="py-5 px-1 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Smartphone size={20} strokeWidth={2} />
-              <div className="flex flex-col">
-                <span className="text-lg font-bold tracking-tight uppercase">
-                  Haptic Vibration
-                </span>
-                <span className="text-xs font-mono text-neutral-400">
-                  MOBILE TOUCH PULSE
-                </span>
-              </div>
-            </div>
-            <button
-              id="toggle-haptic-btn"
-              onClick={() => onUpdateSettings({ hapticsEnabled: !settings.hapticsEnabled })}
-              className={`w-12 h-6 border-2 border-black flex items-center p-0.5 transition-colors ${
-                settings.hapticsEnabled ? 'bg-black justify-end' : 'bg-white justify-start'
-              }`}
-            >
-              <div
-                className={`w-4 h-4 ${
-                  settings.hapticsEnabled ? 'bg-white' : 'bg-black'
-                }`}
-              />
-            </button>
-          </div>
-
-          {/* Time format */}
-          <div className="py-5 px-1 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Clock size={20} strokeWidth={2} />
-              <span className="text-lg font-bold tracking-tight uppercase">
-                Time Format
-              </span>
-            </div>
-            <button
-              id="toggle-timeformat-btn"
-              onClick={() =>
-                onUpdateSettings({
-                  timeFormat: settings.timeFormat === '12h' ? '24h' : '12h',
-                })
-              }
-              className="border border-black px-3 py-1 font-mono text-xs font-bold uppercase hover:bg-black hover:text-white transition-colors"
-            >
-              {settings.timeFormat.toUpperCase()}
-            </button>
-          </div>
-
-          {/* Replay Intro */}
-          <button
-            id="menu-replay-intro"
-            onClick={onReplayIntro}
-            className="w-full py-5 px-1 flex items-center justify-between text-left group hover:bg-neutral-100 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <Sparkles size={20} strokeWidth={2} />
-              <span className="text-lg md:text-xl font-bold tracking-tight uppercase">
-                Replay Bismillah Intro
-              </span>
-            </div>
-            <ArrowRight size={20} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" />
-          </button>
-
-          {/* About Screen */}
-          <button
-            id="menu-about"
-            onClick={onNavigateToAbout}
-            className="w-full py-5 px-1 flex items-center justify-between text-left group hover:bg-neutral-100 transition-colors"
-          >
-            <span className="text-lg md:text-xl font-bold tracking-tight uppercase">
-              About
-            </span>
-            <ArrowRight size={20} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" />
-          </button>
-        </div>
-      )}
-
-      {/* SubView: Notification Preferences */}
-      {activeSubView === 'notifications' && (
-        <div className="space-y-6">
-          <div className="border border-black p-6 space-y-4">
-            <h2 className="font-bold text-base uppercase tracking-wider">
-              BROWSER NOTIFICATIONS
-            </h2>
-            <p className="text-xs font-mono text-neutral-500 leading-relaxed">
-              RECEIVE DISCREET SYSTEM REMINDERS AT MANUALLY CONFIGURED PRAYER TIMES.
-            </p>
-            <button
-              onClick={requestNotificationPermission}
-              className="w-full bg-black text-white py-3 px-4 font-mono font-bold text-xs uppercase tracking-widest hover:bg-neutral-900"
-            >
-              {settings.notificationsEnabled
-                ? 'NOTIFICATIONS ENABLED'
-                : 'REQUEST PERMISSION'}
-            </button>
-          </div>
-
-          <div className="border border-black p-6 space-y-4">
-            <h2 className="font-bold text-base uppercase tracking-wider">
-              REMINDER OFFSET
-            </h2>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {[0, 5, 10, 15].map((mins) => (
+              <div className="flex border border-black shrink-0">
                 <button
-                  key={mins}
-                  onClick={() => onUpdateSettings({ notifyMinutesBefore: mins })}
-                  className={`py-2 px-3 text-xs font-mono font-bold uppercase border border-black ${
-                    settings.notifyMinutesBefore === mins
+                  onClick={() => onUpdateSettings({ timeFormat: '12h' })}
+                  className={`min-h-[40px] px-3 font-mono text-xs font-bold uppercase transition-colors cursor-pointer ${
+                    settings.timeFormat === '12h'
                       ? 'bg-black text-white'
                       : 'bg-white text-black hover:bg-neutral-100'
                   }`}
+                  aria-pressed={settings.timeFormat === '12h'}
                 >
-                  {mins === 0 ? 'AT TIME' : `${mins}M BEFORE`}
+                  12H
                 </button>
-              ))}
+                <button
+                  onClick={() => onUpdateSettings({ timeFormat: '24h' })}
+                  className={`min-h-[40px] px-3 font-mono text-xs font-bold uppercase border-l border-black transition-colors cursor-pointer ${
+                    settings.timeFormat === '24h'
+                      ? 'bg-black text-white'
+                      : 'bg-white text-black hover:bg-neutral-100'
+                  }`}
+                  aria-pressed={settings.timeFormat === '24h'}
+                >
+                  24H
+                </button>
+              </div>
+            </div>
+
+            {/* Sound Effects */}
+            <div className="py-3.5 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Volume2 size={18} strokeWidth={2} className="text-neutral-700 shrink-0" />
+                <div>
+                  <span className="text-sm font-bold font-sans text-black block">
+                    Sound Effects
+                  </span>
+                  <span className="text-xs font-mono text-neutral-500">
+                    Mechanical audio feedback on tick
+                  </span>
+                </div>
+              </div>
+
+              <button
+                id="toggle-sound-btn"
+                role="switch"
+                aria-checked={settings.soundEnabled}
+                aria-label="Toggle Sound Effects"
+                onClick={() => onUpdateSettings({ soundEnabled: !settings.soundEnabled })}
+                className="min-h-[44px] min-w-[60px] flex items-center justify-center cursor-pointer"
+              >
+                <div
+                  className={`w-12 h-6 border-2 border-black flex items-center p-0.5 transition-colors ${
+                    settings.soundEnabled ? 'bg-black justify-end' : 'bg-white justify-start'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 ${
+                      settings.soundEnabled ? 'bg-white' : 'bg-black'
+                    }`}
+                  />
+                </div>
+              </button>
+            </div>
+
+            {/* Haptic Feedback */}
+            <div className="py-3.5 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Smartphone size={18} strokeWidth={2} className="text-neutral-700 shrink-0" />
+                <div>
+                  <span className="text-sm font-bold font-sans text-black block">
+                    Haptic Feedback
+                  </span>
+                  <span className="text-xs font-mono text-neutral-500">
+                    Tactile touch pulse on mobile
+                  </span>
+                </div>
+              </div>
+
+              <button
+                id="toggle-haptic-btn"
+                role="switch"
+                aria-checked={settings.hapticsEnabled}
+                aria-label="Toggle Haptic Feedback"
+                onClick={() => onUpdateSettings({ hapticsEnabled: !settings.hapticsEnabled })}
+                className="min-h-[44px] min-w-[60px] flex items-center justify-center cursor-pointer"
+              >
+                <div
+                  className={`w-12 h-6 border-2 border-black flex items-center p-0.5 transition-colors ${
+                    settings.hapticsEnabled ? 'bg-black justify-end' : 'bg-white justify-start'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 ${
+                      settings.hapticsEnabled ? 'bg-white' : 'bg-black'
+                    }`}
+                  />
+                </div>
+              </button>
+            </div>
+
+            {/* Prayer Reminders */}
+            <div className="py-3.5 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <Bell size={18} strokeWidth={2} className="text-neutral-700 shrink-0" />
+                <div>
+                  <span className="text-sm font-bold font-sans text-black block">
+                    Prayer Reminders
+                  </span>
+                  <span className="text-xs font-mono text-neutral-500 block">
+                    Active while app/tab is open
+                  </span>
+                </div>
+              </div>
+
+              <button
+                id="toggle-notifications-btn"
+                role="switch"
+                aria-checked={settings.notificationsEnabled}
+                aria-label="Toggle Prayer Reminders"
+                onClick={handleToggleNotifications}
+                className="min-h-[44px] min-w-[60px] flex items-center justify-center cursor-pointer"
+              >
+                <div
+                  className={`w-12 h-6 border-2 border-black flex items-center p-0.5 transition-colors ${
+                    settings.notificationsEnabled ? 'bg-black justify-end' : 'bg-white justify-start'
+                  }`}
+                >
+                  <div
+                    className={`w-4 h-4 ${
+                      settings.notificationsEnabled ? 'bg-white' : 'bg-black'
+                    }`}
+                  />
+                </div>
+              </button>
             </div>
           </div>
-        </div>
-      )}
+        </section>
 
-      {/* SubView: Export Data */}
-      {activeSubView === 'export' && (
-        <div className="space-y-6">
-          <div className="border border-black p-6 space-y-3">
-            <h2 className="font-bold text-base uppercase tracking-wider">
-              EXPORT BACKUP
+        {/* ================================================== */}
+        {/* SECTION 3: DATA & BACKUP                           */}
+        {/* ================================================== */}
+        <section aria-label="Data and Backup">
+          <div className="border-b border-black pb-1.5 mb-3">
+            <h2 className="text-xs font-black font-mono tracking-widest text-neutral-500 uppercase">
+              DATA & BACKUP
             </h2>
-            <p className="text-xs font-mono text-neutral-500">
-              DOWNLOAD ALL CONFIGURED SALAH ROUTINES AND HISTORICAL TICK LOGS AS JSON.
-            </p>
-            <button
-              onClick={handleExportJSON}
-              className="w-full border-2 border-black bg-black text-white py-3.5 px-4 font-mono font-bold text-xs uppercase tracking-widest hover:bg-neutral-900 flex items-center justify-center gap-2"
-            >
-              <Download size={16} strokeWidth={2.5} />
-              <span>DOWNLOAD JSON BACKUP</span>
-            </button>
           </div>
 
-          <div className="border border-black p-6 space-y-3">
-            <h2 className="font-bold text-base uppercase tracking-wider">
-              IMPORT BACKUP
-            </h2>
-            <p className="text-xs font-mono text-neutral-500">
-              RESTORE PREVIOUSLY EXPORTED SALAH DATA FROM A JSON FILE.
-            </p>
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* Export Button */}
+              <button
+                id="export-backup-btn"
+                onClick={handleExportJSON}
+                aria-label="Export JSON Backup"
+                className="min-h-[44px] px-3.5 border border-black bg-white text-black text-xs font-mono font-bold uppercase tracking-wider hover:bg-black hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-black transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Download size={15} strokeWidth={2.5} />
+                <span>Export JSON Backup</span>
+              </button>
+
+              {/* Import Button */}
+              <button
+                id="import-backup-btn"
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="Import JSON Backup"
+                className="min-h-[44px] px-3.5 border border-black bg-white text-black text-xs font-mono font-bold uppercase tracking-wider hover:bg-black hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-black transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Upload size={15} strokeWidth={2.5} />
+                <span>Import JSON Backup</span>
+              </button>
+            </div>
+
             <input
               type="file"
               ref={fileInputRef}
               accept=".json"
               onChange={handleFileImport}
               className="hidden"
+              aria-hidden="true"
             />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full border-2 border-black bg-white text-black py-3.5 px-4 font-mono font-bold text-xs uppercase tracking-widest hover:bg-neutral-100 flex items-center justify-center gap-2"
-            >
-              <Upload size={16} strokeWidth={2.5} />
-              <span>SELECT BACKUP FILE</span>
-            </button>
-          </div>
-        </div>
-      )}
 
-      {/* SubView: Clear History */}
-      {activeSubView === 'clear' && (
-        <div className="space-y-6">
-          <div className="border border-black p-6 space-y-3">
-            <h2 className="font-bold text-base uppercase tracking-wider">
-              RESET ALL LOGS
+            {/* Sync State Indicator */}
+            <div className="pt-2 flex items-center justify-between text-xs font-mono text-neutral-500">
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 size={13} className="text-black" />
+                <span className="uppercase tracking-wider font-semibold text-black">Status: Synced</span>
+              </div>
+              <span className="text-[11px] text-neutral-400 uppercase tracking-widest">
+                Cloud & Local Storage
+              </span>
+            </div>
+          </div>
+        </section>
+
+        {/* ================================================== */}
+        {/* SECTION 4: DANGER ZONE                             */}
+        {/* ================================================== */}
+        <section aria-label="Danger Zone">
+          <div className="border-b border-black pb-1.5 mb-3">
+            <h2 className="text-xs font-black font-mono tracking-widest text-neutral-500 uppercase">
+              DANGER ZONE
             </h2>
-            <p className="text-xs font-mono text-neutral-500">
-              CLEARS ALL HISTORICAL COMPLETION TICKS WHILE KEEPING CONFIGURED SALAH TIMES.
-            </p>
-            <button
-              onClick={() => {
-                if (confirm('ARE YOU SURE YOU WANT TO CLEAR ALL COMPLETION LOGS?')) {
-                  onClearHistory();
-                  showFeedback('ALL LOGS CLEARED');
-                }
-              }}
-              className="w-full border-2 border-black bg-black text-white py-3.5 px-4 font-mono font-bold text-xs uppercase tracking-widest hover:bg-neutral-900"
-            >
-              CLEAR COMPLETION LOGS
-            </button>
           </div>
 
-          <div className="border border-neutral-300 p-6 space-y-3">
-            <h2 className="font-bold text-base uppercase tracking-wider text-neutral-800">
-              FACTORY RESET
-            </h2>
-            <p className="text-xs font-mono text-neutral-500">
-              RESETS APP TO DEFAULT 5 PRAYERS AND PURGES ALL HISTORY AND SETTINGS.
-            </p>
-            <button
-              onClick={() => {
-                if (confirm('WARNING: THIS WILL RESET ALL PRAYERS AND DATA TO DEFAULTS. PROCEED?')) {
-                  onResetAllData();
-                  showFeedback('FACTORY RESET COMPLETE');
-                }
-              }}
-              className="w-full border border-black bg-white text-black py-3.5 px-4 font-mono font-bold text-xs uppercase tracking-widest hover:bg-neutral-100"
-            >
-              RESET TO FACTORY DEFAULTS
-            </button>
+          <div>
+            {!showClearConfirm ? (
+              <button
+                id="clear-history-btn"
+                onClick={() => setShowClearConfirm(true)}
+                aria-label="Clear All History"
+                className="w-full min-h-[44px] px-4 border border-black bg-white text-black text-xs font-mono font-bold uppercase tracking-wider hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-black transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Trash2 size={15} strokeWidth={2.5} />
+                <span>Clear All History</span>
+              </button>
+            ) : (
+              <div className="border border-black p-4 bg-neutral-50 space-y-3">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle size={18} className="text-black shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-xs font-bold font-mono uppercase text-black block">
+                      Confirm History Reset
+                    </span>
+                    <span className="text-xs font-mono text-neutral-600">
+                      Permanently clear all historical Salah completion records? This action cannot be undone.
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={() => {
+                      onClearHistory();
+                      setShowClearConfirm(false);
+                      showFeedback('ALL HISTORY CLEARED');
+                    }}
+                    className="flex-1 min-h-[40px] px-3 bg-black text-white text-xs font-mono font-bold uppercase tracking-wider hover:bg-neutral-800 transition-colors cursor-pointer"
+                  >
+                    CONFIRM CLEAR
+                  </button>
+                  <button
+                    onClick={() => setShowClearConfirm(false)}
+                    className="flex-1 min-h-[40px] px-3 border border-black bg-white text-black text-xs font-mono font-bold uppercase tracking-wider hover:bg-neutral-100 transition-colors cursor-pointer"
+                  >
+                    CANCEL
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        </section>
+      </div>
+
+      {/* Single Clean Version Footer */}
+      <footer className="mt-12 pt-6 border-t border-neutral-200 text-center">
+        <p className="text-[11px] font-mono text-neutral-400 uppercase tracking-widest">
+          NAMAZ-TRACKER v1.0 • MONOCHROME EDITION
+        </p>
+      </footer>
     </div>
   );
 }

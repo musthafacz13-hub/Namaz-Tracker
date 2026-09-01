@@ -18,6 +18,9 @@ import {
   getSalahStatusForDay,
   getNextSalahStatus,
   normalizePrayerKey,
+  addPendingSyncDate,
+  removePendingSyncDate,
+  getPendingSyncDates,
   DEFAULT_SALAH_ITEMS,
   DEFAULT_SETTINGS,
 } from '@/lib/storage';
@@ -27,15 +30,18 @@ import {
   parseDateKey,
   formatToDateKey,
 } from '@/lib/calendar';
+import { calculateStreakStats } from '@/lib/streak';
 import {
   fetchRemoteDayLogs,
   syncRemoteDayLog,
+  flushPendingDayLogs,
   isSupabaseConfigured,
   subscribeToAuthChanges,
   signOutUser,
 } from '@/lib/supabase';
 import LoadingScreen from '@/components/LoadingScreen';
 import HomeScreen from '@/components/HomeScreen';
+import ConsistencyScreen from '@/components/ConsistencyScreen';
 import EditScreen from '@/components/EditScreen';
 import BinScreen from '@/components/BinScreen';
 import SettingsScreen from '@/components/SettingsScreen';
@@ -52,7 +58,86 @@ export default function Page() {
   const [currentDateKey, setCurrentDateKey] = useState<string>(() => getTodayKey());
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('home');
 
-  // Initialize auth session and listen for auth state changes without duplicate calls
+  // 1. Service Worker Registration for PWA & Background Support
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker
+        .register('/sw.js')
+        .then((reg) => {
+          // Check for SW updates
+          reg.update().catch(() => {});
+        })
+        .catch((err) => {
+          console.warn('Service worker registration ignored:', err);
+        });
+    }
+  }, []);
+
+  // 2. Dynamic Timezone and Midnight Transition Watcher
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    let lastKnownToday = getTodayKey();
+
+    const checkDateTransition = () => {
+      const currentToday = getTodayKey();
+      if (currentToday !== lastKnownToday) {
+        // Device crossed midnight or timezone changed
+        setCurrentDateKey((prev) => (prev === lastKnownToday ? currentToday : prev));
+        lastKnownToday = currentToday;
+      }
+    };
+
+    const interval = setInterval(checkDateTransition, 30000);
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        checkDateTransition();
+      }
+    };
+
+    window.addEventListener('visibilitychange', onVisibilityOrFocus);
+    window.addEventListener('focus', onVisibilityOrFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('visibilitychange', onVisibilityOrFocus);
+      window.removeEventListener('focus', onVisibilityOrFocus);
+    };
+  }, []);
+
+  // 3. Online Sync Handler (Flushes pending offline queue on reconnect)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !currentUser?.id) return;
+
+    const handleOnline = async () => {
+      try {
+        await flushPendingDayLogs(currentUser.id);
+        const remote = await fetchRemoteDayLogs();
+        if (remote.data) {
+          const pending = getPendingSyncDates(currentUser.id);
+          setDayLogs((prev) => {
+            const merged = { ...prev };
+            Object.entries(remote.data!).forEach(([date, rec]) => {
+              if (!pending.includes(date)) {
+                merged[date] = rec;
+              }
+            });
+            saveAllDayLogs(merged, currentUser.id);
+            return merged;
+          });
+        }
+      } catch (err) {
+        console.warn('Offline sync flush failed:', err);
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [currentUser]);
+
+  // 4. Initialize auth session and listen for auth state changes without duplicate calls
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
 
@@ -70,7 +155,7 @@ export default function Page() {
     };
   }, []);
 
-  // Hydrate from Supabase on initial load or user change
+  // 5. Hydrate from Supabase on initial load or user change
   useEffect(() => {
     if (!isSupabaseConfigured() || !currentUser) return;
 
@@ -87,12 +172,24 @@ export default function Page() {
       }
 
       try {
+        // Flush any pending unsynced offline records first
+        await flushPendingDayLogs(userId);
+
         const remoteLogs = await fetchRemoteDayLogs();
 
         if (isMounted) {
+          const pending = getPendingSyncDates(userId);
           if (remoteLogs.data && Object.keys(remoteLogs.data).length > 0) {
-            setDayLogs(remoteLogs.data);
-            saveAllDayLogs(remoteLogs.data, userId);
+            // Merge remote with local, preserving any un-synced pending items
+            const merged: Record<string, DayStatusRecord> = { ...remoteLogs.data };
+            pending.forEach((pendingDate) => {
+              if (localCached[pendingDate]) {
+                merged[pendingDate] = localCached[pendingDate];
+              }
+            });
+
+            setDayLogs(merged);
+            saveAllDayLogs(merged, userId);
           } else if (Object.keys(localCached).length === 0) {
             // New user account has no logs yet: start with clean isolated logs
             setDayLogs({});
@@ -125,7 +222,7 @@ export default function Page() {
   };
 
   const handleSetSalahStatus = useCallback(
-    (id: string, newStatus: SalahStatus, dateKey: string = currentDateKey) => {
+    async (id: string, newStatus: SalahStatus, dateKey: string = currentDateKey) => {
       const pKey = normalizePrayerKey(id);
       if (!pKey) return;
 
@@ -146,8 +243,22 @@ export default function Page() {
       const newLogs = { ...dayLogs, [dateKey]: updatedRec };
       setDayLogs(newLogs);
       saveDayLog(dateKey, updatedRec, currentUser?.id);
-      if (isSupabaseConfigured() && currentUser) {
-        syncRemoteDayLog(dateKey, updatedRec).catch(() => {});
+
+      // Track in offline pending queue
+      if (currentUser?.id) {
+        addPendingSyncDate(dateKey, currentUser.id);
+      }
+
+      // Perform optimistic remote sync
+      if (isSupabaseConfigured() && currentUser?.id) {
+        try {
+          const res = await syncRemoteDayLog(dateKey, updatedRec);
+          if (res.success) {
+            removePendingSyncDate(dateKey, currentUser.id);
+          }
+        } catch {
+          // Kept safely in pending queue for background sync
+        }
       }
     },
     [currentDateKey, dayLogs, currentUser]
@@ -279,11 +390,11 @@ export default function Page() {
     setSettings(DEFAULT_SETTINGS);
   };
 
-  // Notification watcher
+  // Notification watcher (supports Service Worker & Web Notifications)
   useEffect(() => {
     if (!settings.notificationsEnabled || typeof window === 'undefined') return;
 
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       const now = new Date();
       const currentH = String(now.getHours()).padStart(2, '0');
       const currentM = String(now.getMinutes()).padStart(2, '0');
@@ -293,9 +404,21 @@ export default function Page() {
       for (const item of active) {
         if (item.time === currentTimeStr && 'Notification' in window && Notification.permission === 'granted') {
           try {
+            if ('serviceWorker' in navigator) {
+              const reg = await navigator.serviceWorker.getRegistration();
+              if (reg && 'showNotification' in reg) {
+                reg.showNotification(`Salah Tracker: ${item.name}`, {
+                  body: `Time for ${item.name} prayer. Focus & consistency.`,
+                  icon: '/icon.svg',
+                  badge: '/icon.svg',
+                  tag: `salah-${item.id}-${currentTimeStr}`,
+                });
+                continue;
+              }
+            }
             new Notification(`Salah Tracker: ${item.name}`, {
               body: `Time for ${item.name} prayer. Focus & consistency.`,
-              icon: '/favicon.ico',
+              icon: '/icon.svg',
             });
           } catch {
             // ignore
@@ -310,6 +433,7 @@ export default function Page() {
   const activeDayRec = parseDayRecord(dayLogs[currentDateKey]);
   const activeCompletedIds = activeDayRec.prayed;
   const binCount = salahItems.filter((i) => Boolean(i.deletedAt)).length;
+  const streakStats = calculateStreakStats(dayLogs);
 
   // 1. Initial Session Check Loading (Prevents flickering)
   if (!authInitialized) {
@@ -366,9 +490,17 @@ export default function Page() {
           onChangeDate={handleChangeDate}
           onResetDate={handleResetDate}
           onNavigateToEdit={() => setCurrentScreen('edit')}
+          onViewConsistency={() => setCurrentScreen('consistency')}
           soundEnabled={settings.soundEnabled}
           hapticsEnabled={settings.hapticsEnabled}
           timeFormat={settings.timeFormat}
+        />
+      )}
+
+      {currentScreen === 'consistency' && (
+        <ConsistencyScreen
+          stats={streakStats}
+          onBack={() => setCurrentScreen('home')}
         />
       )}
 

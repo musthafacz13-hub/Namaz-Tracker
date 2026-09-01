@@ -21,12 +21,14 @@ import {
   CALENDAR_MAX_YEAR,
 } from '@/lib/calendar';
 import { playTickSound, triggerHaptic } from '@/lib/audio';
+import { calculateStreakStats } from '@/lib/streak';
 import {
   ChevronLeft,
   ChevronRight,
   Check,
   X,
   Circle,
+  Flame,
 } from 'lucide-react';
 
 interface HomeScreenProps {
@@ -40,6 +42,7 @@ interface HomeScreenProps {
   onChangeDate: (delta: number) => void;
   onResetDate: () => void;
   onNavigateToEdit: () => void;
+  onViewConsistency?: () => void;
   soundEnabled: boolean;
   hapticsEnabled: boolean;
   timeFormat: '12h' | '24h';
@@ -53,6 +56,7 @@ export default function HomeScreen({
   onSelectDate,
   onResetDate,
   onNavigateToEdit,
+  onViewConsistency,
   soundEnabled,
   hapticsEnabled,
 }: HomeScreenProps) {
@@ -278,12 +282,21 @@ export default function HomeScreen({
     return list;
   }, [selectedYear, selectedMonth, selectedDay, dayLogs, activeItems.length, todayKey, currentDateKey]);
 
-  // ----------------------------------------------------
-  // 6. SELECTED DAY SALAH STATS
+  // 6. SELECTED DAY SALAH STATS & OVERALL STREAK
   // ----------------------------------------------------
   const currentDayRecord = useMemo(() => {
     return parseDayRecord(dayLogs[currentDateKey]);
   }, [dayLogs, currentDateKey]);
+
+  // Derived streak and consistency stats from raw dayLogs
+  const streakStats = useMemo(() => {
+    // Normalizing dayLogs to clean Record<string, DayStatusRecord>
+    const cleanLogs: Record<string, DayStatusRecord> = {};
+    Object.entries(dayLogs).forEach(([date, rec]) => {
+      cleanLogs[date] = parseDayRecord(rec);
+    });
+    return calculateStreakStats(cleanLogs);
+  }, [dayLogs]);
 
   const selectedDayPrayedCount = currentDayRecord.prayed.length;
   const selectedDayTotalCount = activeItems.length;
@@ -339,12 +352,13 @@ export default function HomeScreen({
           <button
             id="jump-today-btn"
             onClick={onResetDate}
-            className="px-3 py-1 border border-black bg-black text-white text-[11px] font-mono font-bold uppercase tracking-wider hover:bg-neutral-800 transition-colors"
+            aria-label="Jump to today's date"
+            className="min-h-[38px] px-3.5 border border-black bg-black text-white text-[11px] font-mono font-bold uppercase tracking-wider hover:bg-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-black transition-colors flex items-center justify-center"
           >
             JUMP TO TODAY
           </button>
         ) : (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 border border-neutral-300 text-[11px] font-mono font-semibold uppercase text-neutral-600">
+          <div className="flex items-center gap-1.5 min-h-[38px] px-3 border border-neutral-300 text-[11px] font-mono font-semibold uppercase text-neutral-600">
             <span className="w-1.5 h-1.5 rounded-full bg-black" />
             <span>TODAY</span>
           </div>
@@ -496,14 +510,14 @@ export default function HomeScreen({
         {/* -------------------------------------------------- */}
         <section
           aria-label="Month and Year Selector"
-          className="flex items-center justify-between border border-black bg-white px-2 py-1.5"
+          className="flex items-center justify-between border border-black bg-white px-2 py-1"
         >
           <button
             id="prev-month-btn"
             onClick={handlePrevMonth}
             disabled={!canGoPrev}
             aria-label="Previous Month"
-            className={`w-10 h-10 flex items-center justify-center border transition-colors ${
+            className={`w-11 h-11 flex items-center justify-center border transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-black ${
               canGoPrev
                 ? 'border-transparent hover:border-black hover:bg-neutral-100 text-black cursor-pointer'
                 : 'border-transparent text-neutral-300 cursor-not-allowed'
@@ -521,7 +535,7 @@ export default function HomeScreen({
               value={selectedMonth}
               onChange={(e) => handleSelectMonth(Number(e.target.value))}
               aria-label="Select Month"
-              className="text-xs md:text-sm font-black font-sans tracking-wider uppercase bg-transparent cursor-pointer py-1 px-1 border-b border-dashed border-transparent hover:border-black focus:border-black focus:outline-none text-center"
+              className="h-11 text-xs md:text-sm font-black font-sans tracking-wider uppercase bg-transparent cursor-pointer py-1 px-2 border-b border-dashed border-transparent hover:border-black focus:border-black focus:outline-none text-center"
             >
               {availableMonths.map((m) => (
                 <option key={m.month} value={m.month} className="bg-white text-black font-mono">
@@ -538,7 +552,7 @@ export default function HomeScreen({
               value={selectedYear}
               onChange={(e) => handleSelectYear(Number(e.target.value))}
               aria-label="Select Year"
-              className="text-xs md:text-sm font-black font-mono tracking-wider uppercase bg-transparent cursor-pointer py-1 px-1 border-b border-dashed border-transparent hover:border-black focus:border-black focus:outline-none text-center"
+              className="h-11 text-xs md:text-sm font-black font-mono tracking-wider uppercase bg-transparent cursor-pointer py-1 px-2 border-b border-dashed border-transparent hover:border-black focus:border-black focus:outline-none text-center"
             >
               {availableYears.map((yr) => (
                 <option key={yr} value={yr} className="bg-white text-black font-mono">
@@ -553,7 +567,7 @@ export default function HomeScreen({
             onClick={handleNextMonth}
             disabled={!canGoNext}
             aria-label="Next Month"
-            className={`w-10 h-10 flex items-center justify-center border transition-colors ${
+            className={`w-11 h-11 flex items-center justify-center border transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-black ${
               canGoNext
                 ? 'border-transparent hover:border-black hover:bg-neutral-100 text-black cursor-pointer'
                 : 'border-transparent text-neutral-300 cursor-not-allowed'
@@ -574,7 +588,8 @@ export default function HomeScreen({
                   key={item.dateKey}
                   id={`day-btn-${item.dateKey}`}
                   onClick={() => onSelectDate(item.dateKey)}
-                  className={`flex flex-col items-center justify-between py-2 px-1 min-h-[58px] transition-all border ${
+                  aria-label={`${item.dayName} ${item.dayNum} ${item.statusType === 'all' ? 'All prayers completed' : item.statusType === 'partial' ? 'Partially completed' : 'No prayers recorded'}`}
+                  className={`flex flex-col items-center justify-between py-2 px-1 min-h-[60px] transition-all border focus:outline-none focus-visible:ring-1 focus-visible:ring-black ${
                     item.isSelected
                       ? 'bg-black text-white border-black shadow-sm'
                       : 'bg-white text-black border-transparent hover:border-neutral-300'
@@ -720,51 +735,63 @@ export default function HomeScreen({
                       </div>
                     </div>
 
-                    {/* Right: Explicit 3-State Action Chips */}
-                    <div className="flex items-center gap-1 shrink-0">
+                    {/* Right: Explicit 3-State Action Chips with >=44px mobile touch targets */}
+                    <div className="flex items-center gap-0.5 shrink-0">
                       {/* 1. NOT RECORDED (○) */}
                       <button
                         id={`btn-unrecorded-${salah.id}`}
                         onClick={() => handleStatusChange(salah.id, 'not_recorded')}
-                        aria-label="Mark as not recorded"
+                        aria-label={`Mark ${salah.name} as not recorded`}
                         title="Not Recorded"
-                        className={`w-8 h-8 flex items-center justify-center border transition-all ${
-                          status === 'not_recorded'
-                            ? 'border-black bg-white text-black font-bold shadow-xs'
-                            : 'border-neutral-200 text-neutral-300 hover:border-neutral-400 hover:text-black bg-white'
-                        }`}
+                        className="w-11 h-11 p-1 flex items-center justify-center cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-black"
                       >
-                        <Circle size={14} strokeWidth={status === 'not_recorded' ? 2.5 : 1.5} />
+                        <div
+                          className={`w-8 h-8 flex items-center justify-center border transition-all ${
+                            status === 'not_recorded'
+                              ? 'border-black bg-white text-black font-bold shadow-xs'
+                              : 'border-neutral-200 text-neutral-300 hover:border-neutral-400 hover:text-black bg-white'
+                          }`}
+                        >
+                          <Circle size={14} strokeWidth={status === 'not_recorded' ? 2.5 : 1.5} />
+                        </div>
                       </button>
 
                       {/* 2. PRAYED (✓) */}
                       <button
                         id={`btn-prayed-${salah.id}`}
                         onClick={() => handleStatusChange(salah.id, 'prayed')}
-                        aria-label="Mark as prayed"
+                        aria-label={`Mark ${salah.name} as prayed`}
                         title="Prayed"
-                        className={`w-8 h-8 flex items-center justify-center border transition-all ${
-                          status === 'prayed'
-                            ? 'border-black bg-black text-white'
-                            : 'border-neutral-200 text-neutral-300 hover:border-black hover:text-black bg-white'
-                        }`}
+                        className="w-11 h-11 p-1 flex items-center justify-center cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-black"
                       >
-                        <Check size={16} strokeWidth={status === 'prayed' ? 3 : 2} />
+                        <div
+                          className={`w-8 h-8 flex items-center justify-center border transition-all ${
+                            status === 'prayed'
+                              ? 'border-black bg-black text-white'
+                              : 'border-neutral-200 text-neutral-300 hover:border-black hover:text-black bg-white'
+                          }`}
+                        >
+                          <Check size={16} strokeWidth={status === 'prayed' ? 3 : 2} />
+                        </div>
                       </button>
 
                       {/* 3. MISSED (×) */}
                       <button
                         id={`btn-missed-${salah.id}`}
                         onClick={() => handleStatusChange(salah.id, 'missed')}
-                        aria-label="Mark as missed"
+                        aria-label={`Mark ${salah.name} as missed`}
                         title="Missed"
-                        className={`w-8 h-8 flex items-center justify-center border transition-all ${
-                          status === 'missed'
-                            ? 'border-black bg-neutral-800 text-white'
-                            : 'border-neutral-200 text-neutral-300 hover:border-neutral-400 hover:text-black bg-white'
-                        }`}
+                        className="w-11 h-11 p-1 flex items-center justify-center cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-black"
                       >
-                        <X size={15} strokeWidth={status === 'missed' ? 3 : 2} />
+                        <div
+                          className={`w-8 h-8 flex items-center justify-center border transition-all ${
+                            status === 'missed'
+                              ? 'border-black bg-neutral-800 text-white'
+                              : 'border-neutral-200 text-neutral-300 hover:border-neutral-400 hover:text-black bg-white'
+                          }`}
+                        >
+                          <X size={15} strokeWidth={status === 'missed' ? 3 : 2} />
+                        </div>
                       </button>
                     </div>
                   </div>
@@ -795,6 +822,47 @@ export default function HomeScreen({
               {selectedDayPercent}%
             </span>
           </div>
+        </section>
+
+        {/* -------------------------------------------------- */}
+        {/* 7. STREAK & CONSISTENCY COMPACT SUMMARY            */}
+        {/* -------------------------------------------------- */}
+        <section
+          aria-label="Salah Streak and Consistency"
+          className="border border-black bg-white p-3.5 flex items-center justify-between"
+        >
+          <div className="flex items-center gap-4 sm:gap-6">
+            <div>
+              <span className="text-[10px] font-mono font-bold tracking-widest text-neutral-500 uppercase block">
+                STREAK
+              </span>
+              <div className="text-base font-black font-mono tracking-tight mt-0.5 flex items-center gap-1">
+                <Flame size={14} className="text-black fill-black" />
+                <span>{streakStats.currentStreak} DAYS</span>
+              </div>
+            </div>
+
+            <div className="border-l border-neutral-200 pl-4 sm:pl-6">
+              <span className="text-[10px] font-mono font-bold tracking-widest text-neutral-500 uppercase block">
+                CONSISTENCY
+              </span>
+              <div className="text-base font-black font-mono tracking-tight mt-0.5">
+                {streakStats.consistencyPercentage}%
+              </div>
+            </div>
+          </div>
+
+          {onViewConsistency && (
+            <button
+              id="view-consistency-btn"
+              onClick={onViewConsistency}
+              aria-label="View Consistency and Milestones"
+              className="min-h-[38px] px-3 border border-black bg-black text-white text-[11px] font-mono font-bold uppercase tracking-wider hover:bg-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-black transition-colors flex items-center gap-1 cursor-pointer"
+            >
+              <span>MILESTONES</span>
+              <ChevronRight size={14} strokeWidth={2.5} />
+            </button>
+          )}
         </section>
       </div>
     </div>

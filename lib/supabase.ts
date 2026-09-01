@@ -9,6 +9,9 @@ import {
   fromDbPrayerStatus,
   toDbPrayerStatus,
   parseDayRecord,
+  getPendingSyncDates,
+  removePendingSyncDate,
+  loadDayLogs,
 } from './storage';
 
 /**
@@ -139,6 +142,31 @@ export async function syncRemoteDayLog(
 }
 
 /**
+ * Flush all pending offline Day Logs to Supabase
+ */
+export async function flushPendingDayLogs(userId: string): Promise<number> {
+  const pendingDates = getPendingSyncDates(userId);
+  if (pendingDates.length === 0) return 0;
+
+  const localLogs = loadDayLogs(userId);
+  let syncedCount = 0;
+
+  for (const dateKey of pendingDates) {
+    const record = localLogs[dateKey];
+    if (record) {
+      const res = await syncRemoteDayLog(dateKey, record);
+      if (res.success) {
+        removePendingSyncDate(dateKey, userId);
+        syncedCount++;
+      }
+    } else {
+      removePendingSyncDate(dateKey, userId);
+    }
+  }
+  return syncedCount;
+}
+
+/**
  * Update a specific prayer column in `day_logs` without overwriting the other four prayers
  */
 export async function updateRemotePrayerStatus(
@@ -200,10 +228,10 @@ export async function signInWithEmail(
 export async function signUpWithEmail(
   email: string,
   password: string
-): Promise<{ user: any; error: string | null }> {
+): Promise<{ user: any; session: any; error: string | null }> {
   const client = getSupabaseClient();
   if (!client) {
-    return { user: null, error: 'Supabase client is not configured.' };
+    return { user: null, session: null, error: 'Supabase client is not configured.' };
   }
 
   const normalizedEmail = email.trim().toLowerCase();
@@ -229,18 +257,167 @@ export async function signUpWithEmail(
       } else if (lower.includes('rate limit') || lower.includes('too many')) {
         msg = 'Too many attempts. Please wait a moment and try again.';
       }
-      return { user: null, error: msg };
+      return { user: null, session: null, error: msg };
     }
 
     // Check if user already exists when Supabase returns obfuscated user with 0 identities
     if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-      return { user: null, error: 'An account with this email already exists. Please sign in.' };
+      return { user: null, session: null, error: 'An account with this email already exists. Please sign in.' };
     }
 
-    return { user: data.user, error: null };
+    return { user: data.user, session: data.session, error: null };
   } catch (err: any) {
     console.warn('[Supabase Auth sign-up error]:', err?.message);
-    return { user: null, error: 'Unable to connect. Please check your internet connection.' };
+    return { user: null, session: null, error: 'Unable to connect. Please check your internet connection.' };
+  }
+}
+
+/**
+ * Verify 6-digit Email OTP Token via Supabase Auth
+ */
+export async function verifyEmailOtp(
+  email: string,
+  token: string
+): Promise<{ user: any; session: any; error: string | null }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { user: null, session: null, error: 'Supabase client is not configured.' };
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const cleanToken = token.trim();
+
+  if (!cleanToken || cleanToken.length < 6) {
+    return { user: null, session: null, error: 'Please enter the full 6-digit code.' };
+  }
+
+  try {
+    // Try signup OTP confirmation type
+    let res = await client.auth.verifyOtp({
+      email: normalizedEmail,
+      token: cleanToken,
+      type: 'signup',
+    });
+
+    // Fallback to email verification OTP type if signup type failed with non-expiry error
+    if (res.error) {
+      const lowerErr = res.error.message.toLowerCase();
+      if (!lowerErr.includes('expired')) {
+        const fallbackRes = await client.auth.verifyOtp({
+          email: normalizedEmail,
+          token: cleanToken,
+          type: 'email',
+        });
+        if (!fallbackRes.error) {
+          res = fallbackRes;
+        }
+      }
+    }
+
+    if (res.error) {
+      console.warn('[Supabase verifyOtp error]:', res.error.message);
+      const lower = res.error.message.toLowerCase();
+      if (lower.includes('expired') || lower.includes('has expired')) {
+        return {
+          user: null,
+          session: null,
+          error: 'This code has expired. Request a new code.',
+        };
+      }
+      if (
+        lower.includes('invalid') ||
+        lower.includes('incorrect') ||
+        lower.includes('token') ||
+        lower.includes('otp') ||
+        lower.includes('match')
+      ) {
+        return {
+          user: null,
+          session: null,
+          error: 'Incorrect verification code. Please try again.',
+        };
+      }
+      if (
+        lower.includes('fetch') ||
+        lower.includes('network') ||
+        lower.includes('connection') ||
+        lower.includes('timeout')
+      ) {
+        return {
+          user: null,
+          session: null,
+          error: 'Unable to verify right now. Check your connection and try again.',
+        };
+      }
+      return {
+        user: null,
+        session: null,
+        error: 'Incorrect verification code. Please try again.',
+      };
+    }
+
+    return {
+      user: res.data.user ?? res.data.session?.user ?? null,
+      session: res.data.session ?? null,
+      error: null,
+    };
+  } catch (err: any) {
+    console.warn('[Supabase verifyOtp exception]:', err?.message);
+    return {
+      user: null,
+      session: null,
+      error: 'Unable to verify right now. Check your connection and try again.',
+    };
+  }
+}
+
+/**
+ * Resend Email Verification OTP Token via Supabase Auth
+ */
+export async function resendSignupOtp(
+  email: string
+): Promise<{ success: boolean; error: string | null }> {
+  const client = getSupabaseClient();
+  if (!client) {
+    return { success: false, error: 'Supabase client is not configured.' };
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    const { error } = await client.auth.resend({
+      type: 'signup',
+      email: normalizedEmail,
+    });
+
+    if (error) {
+      console.warn('[Supabase resendOtp error]:', error.message);
+      const lower = error.message.toLowerCase();
+      if (lower.includes('rate limit') || lower.includes('too many') || lower.includes('wait')) {
+        return {
+          success: false,
+          error: 'Please wait a moment before requesting another code.',
+        };
+      }
+      if (lower.includes('network') || lower.includes('connection') || lower.includes('fetch')) {
+        return {
+          success: false,
+          error: 'Unable to verify right now. Check your connection and try again.',
+        };
+      }
+      return {
+        success: false,
+        error: 'Unable to send verification code. Please try again.',
+      };
+    }
+
+    return { success: true, error: null };
+  } catch (err: any) {
+    console.warn('[Supabase resendOtp exception]:', err?.message);
+    return {
+      success: false,
+      error: 'Unable to verify right now. Check your connection and try again.',
+    };
   }
 }
 
