@@ -241,7 +241,7 @@ export default function AuthScreen({ onSuccess }: AuthScreenProps) {
         setOtpStatus('error');
         setErrorMessage(
           error.includes('expired')
-            ? 'This code has expired. Request a new code.'
+            ? 'This verification code has expired. Request a new code.'
             : error.includes('connection') || error.includes('network')
             ? 'Unable to verify right now. Check your connection and try again.'
             : 'Incorrect verification code.'

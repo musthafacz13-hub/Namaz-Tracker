@@ -26,6 +26,24 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 // Single persistent client instance initialized once
 let supabaseInstance: SupabaseClient | null = null;
 
+/**
+ * Canonical production URL for Namaz-Tracker authentication redirects.
+ */
+export const PRODUCTION_SITE_URL = 'https://namaz-tracker-nu.vercel.app/';
+
+/**
+ * Derives the safe authentication redirect URL.
+ * In browser context, uses the active origin (e.g. https://namaz-tracker-nu.vercel.app/).
+ * Defaults to the production URL.
+ */
+export function getAuthRedirectUrl(): string {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    const origin = window.location.origin;
+    return origin.endsWith('/') ? origin : `${origin}/`;
+  }
+  return PRODUCTION_SITE_URL;
+}
+
 export function getSupabaseClient(): SupabaseClient | null {
   if (!supabaseUrl || !supabaseAnonKey) {
     return null;
@@ -36,7 +54,7 @@ export function getSupabaseClient(): SupabaseClient | null {
         auth: {
           persistSession: true,
           autoRefreshToken: true,
-          detectSessionInUrl: false,
+          detectSessionInUrl: true,
         },
       });
     } catch (err) {
@@ -247,6 +265,9 @@ export async function signUpWithEmail(
     const { data, error } = await client.auth.signUp({
       email: normalizedEmail,
       password,
+      options: {
+        emailRedirectTo: getAuthRedirectUrl(),
+      },
     });
 
     if (error) {
@@ -297,6 +318,7 @@ export async function sendEmailOtp(
       email: normalizedEmail,
       options: {
         shouldCreateUser: true,
+        emailRedirectTo: getAuthRedirectUrl(),
       },
     });
 
@@ -380,7 +402,7 @@ export async function verifyEmailOtp(
         return {
           user: null,
           session: null,
-          error: 'This code has expired. Request a new code.',
+          error: 'This verification code has expired. Request a new code.',
         };
       }
       if (
@@ -475,6 +497,9 @@ export async function resendSignupOtp(
     const { error } = await client.auth.resend({
       type: 'signup',
       email: normalizedEmail,
+      options: {
+        emailRedirectTo: getAuthRedirectUrl(),
+      },
     });
 
     if (error) {
