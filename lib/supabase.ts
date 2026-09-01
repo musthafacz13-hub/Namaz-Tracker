@@ -183,7 +183,8 @@ export async function updateRemotePrayerStatus(
 }
 
 /**
- * Supabase Auth Methods (Email + Password only)
+ * Supabase Auth Methods (Email + Password credential validation)
+ * Validates credentials and ensures no unverified authenticated state lingers before OTP verification
  */
 export async function signInWithEmail(
   email: string,
@@ -204,11 +205,9 @@ export async function signInWithEmail(
 
     if (error) {
       console.warn('[Supabase Auth sign-in failure]:', error.message);
-      let msg = error.message;
+      let msg = 'Invalid email or password. Please try again.';
       const lower = error.message.toLowerCase();
-      if (lower.includes('invalid login credentials') || lower.includes('invalid credentials')) {
-        msg = 'Invalid email or password. Please try again.';
-      } else if (lower.includes('email not confirmed')) {
+      if (lower.includes('email not confirmed')) {
         msg = 'Please confirm your email before signing in.';
       } else if (lower.includes('too many') || lower.includes('rate limit')) {
         msg = 'Too many attempts. Please wait a moment and try again.';
@@ -217,6 +216,14 @@ export async function signInWithEmail(
       }
       return { user: null, error: msg };
     }
+
+    if (!data.user) {
+      return { user: null, error: 'Invalid email or password. Please try again.' };
+    }
+
+    // Security hardening: immediately clear temporary password session so the user
+    // MUST complete email OTP verification to obtain the active authenticated session.
+    await client.auth.signOut();
 
     return { user: data.user, error: null };
   } catch (err: any) {

@@ -37,6 +37,7 @@ import {
   flushPendingDayLogs,
   isSupabaseConfigured,
   subscribeToAuthChanges,
+  getCurrentSessionUser,
   signOutUser,
 } from '@/lib/supabase';
 import LoadingScreen from '@/components/LoadingScreen';
@@ -142,9 +143,25 @@ export default function Page() {
     if (!isSupabaseConfigured()) return;
 
     let isMounted = true;
+
+    // Check for existing valid session on startup
+    getCurrentSessionUser().then((user) => {
+      if (isMounted) {
+        if (user) {
+          setCurrentUser(user);
+        }
+        setAuthInitialized(true);
+      }
+    });
+
     const unsubscribe = subscribeToAuthChanges((user) => {
       if (isMounted) {
-        setCurrentUser(user);
+        // If logged out or session terminated, lock app immediately
+        if (!user) {
+          setCurrentUser(null);
+        } else {
+          setCurrentUser(user);
+        }
         setAuthInitialized(true);
       }
     });
