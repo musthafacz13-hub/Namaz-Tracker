@@ -222,15 +222,19 @@ export async function signInWithEmail(
     });
 
     if (error) {
-      console.warn('[Supabase Auth sign-in failure]:', error.message);
+      console.warn('[Supabase Auth sign-in failure]:', {
+        message: error.message,
+        code: (error as any).code,
+        status: (error as any).status,
+      });
       let msg = 'Invalid email or password. Please try again.';
       const lower = error.message.toLowerCase();
       if (lower.includes('email not confirmed')) {
         msg = 'Please confirm your email before signing in.';
       } else if (lower.includes('too many') || lower.includes('rate limit')) {
         msg = 'Too many attempts. Please wait a moment and try again.';
-      } else if (lower.includes('user not found')) {
-        msg = 'No account found with this email.';
+      } else if (lower.includes('user not found') || lower.includes('invalid credentials') || lower.includes('invalid login credentials')) {
+        msg = 'Invalid email or password. Please try again.';
       }
       return { user: null, error: msg };
     }
@@ -245,7 +249,11 @@ export async function signInWithEmail(
 
     return { user: data.user, error: null };
   } catch (err: any) {
-    console.warn('[Supabase Auth network error]:', err?.message);
+    console.warn('[Supabase Auth network exception]:', {
+      message: err?.message,
+      code: err?.code,
+      status: err?.status,
+    });
     return { user: null, error: 'Unable to connect. Please check your internet connection.' };
   }
 }
@@ -265,13 +273,14 @@ export async function signUpWithEmail(
     const { data, error } = await client.auth.signUp({
       email: normalizedEmail,
       password,
-      options: {
-        emailRedirectTo: getAuthRedirectUrl(),
-      },
     });
 
     if (error) {
-      console.warn('[Supabase Auth sign-up failure]:', error.message);
+      console.warn('[Supabase Auth sign-up failure]:', {
+        message: error.message,
+        code: (error as any).code,
+        status: (error as any).status,
+      });
       let msg = error.message;
       const lower = error.message.toLowerCase();
       if (
@@ -284,6 +293,8 @@ export async function signUpWithEmail(
         msg = 'Password must be at least 6 characters.';
       } else if (lower.includes('rate limit') || lower.includes('too many')) {
         msg = 'Too many attempts. Please wait a moment and try again.';
+      } else if (lower.includes('magic link') || lower.includes('error sending')) {
+        msg = 'Email delivery failed. Please verify your Supabase SMTP / email provider settings.';
       }
       return { user: null, session: null, error: msg };
     }
@@ -295,7 +306,11 @@ export async function signUpWithEmail(
 
     return { user: data.user, session: data.session, error: null };
   } catch (err: any) {
-    console.warn('[Supabase Auth sign-up error]:', err?.message);
+    console.warn('[Supabase Auth sign-up exception]:', {
+      message: err?.message,
+      code: err?.code,
+      status: err?.status,
+    });
     return { user: null, session: null, error: 'Unable to connect. Please check your internet connection.' };
   }
 }
@@ -318,14 +333,22 @@ export async function sendEmailOtp(
       email: normalizedEmail,
       options: {
         shouldCreateUser: true,
-        emailRedirectTo: getAuthRedirectUrl(),
       },
     });
 
     if (error) {
-      console.warn('[Supabase sendEmailOtp error]:', error.message);
+      console.warn('[Supabase sendEmailOtp error]:', {
+        message: error.message,
+        code: (error as any).code,
+        status: (error as any).status,
+      });
       const lower = error.message.toLowerCase();
-      if (lower.includes('rate limit') || lower.includes('too many') || lower.includes('wait')) {
+      if (
+        lower.includes('rate limit') ||
+        lower.includes('too many') ||
+        lower.includes('wait') ||
+        (error as any).code === 'over_email_send_rate_limit'
+      ) {
         return {
           success: false,
           error: 'Too many requests. Please wait a moment before trying again.',
@@ -337,6 +360,19 @@ export async function sendEmailOtp(
           error: 'Unable to connect. Please check your internet connection.',
         };
       }
+      if (
+        lower.includes('magic link') ||
+        lower.includes('error sending') ||
+        lower.includes('smtp') ||
+        lower.includes('email provider') ||
+        (error as any).code === 'email_provider_disabled' ||
+        (error as any).code === 'smtp_error'
+      ) {
+        return {
+          success: false,
+          error: 'Email delivery failed. Please verify your Supabase SMTP / email configuration (Resend/Custom SMTP).',
+        };
+      }
       return {
         success: false,
         error: error.message || 'Unable to send verification code. Please try again.',
@@ -345,7 +381,11 @@ export async function sendEmailOtp(
 
     return { success: true, error: null };
   } catch (err: any) {
-    console.warn('[Supabase sendEmailOtp exception]:', err?.message);
+    console.warn('[Supabase sendEmailOtp exception]:', {
+      message: err?.message,
+      code: err?.code,
+      status: err?.status,
+    });
     return {
       success: false,
       error: 'Unable to send verification code. Please check your internet connection.',
@@ -373,7 +413,7 @@ export async function verifyEmailOtp(
   }
 
   try {
-    // Try email/magiclink OTP verification first (standard signInWithOtp flow)
+    // Try email OTP verification first (standard signInWithOtp flow)
     let res = await client.auth.verifyOtp({
       email: normalizedEmail,
       token: cleanToken,
@@ -396,7 +436,11 @@ export async function verifyEmailOtp(
     }
 
     if (res.error) {
-      console.warn('[Supabase verifyOtp error]:', res.error.message);
+      console.warn('[Supabase verifyOtp error]:', {
+        message: res.error.message,
+        code: (res.error as any).code,
+        status: (res.error as any).status,
+      });
       const lower = res.error.message.toLowerCase();
       if (lower.includes('expired') || lower.includes('has expired')) {
         return {
@@ -443,7 +487,11 @@ export async function verifyEmailOtp(
       error: null,
     };
   } catch (err: any) {
-    console.warn('[Supabase verifyOtp exception]:', err?.message);
+    console.warn('[Supabase verifyOtp exception]:', {
+      message: err?.message,
+      code: err?.code,
+      status: err?.status,
+    });
     return {
       user: null,
       session: null,
@@ -469,13 +517,21 @@ export async function updateUserPassword(
     });
 
     if (error) {
-      console.warn('[Supabase updateUser password error]:', error.message);
+      console.warn('[Supabase updateUser password error]:', {
+        message: error.message,
+        code: (error as any).code,
+        status: (error as any).status,
+      });
       return { user: null, error: error.message || 'Unable to update password.' };
     }
 
     return { user: data.user, error: null };
   } catch (err: any) {
-    console.warn('[Supabase updateUser password exception]:', err?.message);
+    console.warn('[Supabase updateUser password exception]:', {
+      message: err?.message,
+      code: err?.code,
+      status: err?.status,
+    });
     return { user: null, error: 'Unable to update password. Please try again.' };
   }
 }
@@ -497,13 +553,14 @@ export async function resendSignupOtp(
     const { error } = await client.auth.resend({
       type: 'signup',
       email: normalizedEmail,
-      options: {
-        emailRedirectTo: getAuthRedirectUrl(),
-      },
     });
 
     if (error) {
-      console.warn('[Supabase resendOtp error]:', error.message);
+      console.warn('[Supabase resendOtp error]:', {
+        message: error.message,
+        code: (error as any).code,
+        status: (error as any).status,
+      });
       const lower = error.message.toLowerCase();
       if (lower.includes('rate limit') || lower.includes('too many') || lower.includes('wait')) {
         return {
@@ -517,6 +574,12 @@ export async function resendSignupOtp(
           error: 'Unable to verify right now. Check your connection and try again.',
         };
       }
+      if (lower.includes('magic link') || lower.includes('error sending')) {
+        return {
+          success: false,
+          error: 'Email delivery failed. Please verify your Supabase SMTP / email configuration.',
+        };
+      }
       return {
         success: false,
         error: 'Unable to send verification code. Please try again.',
@@ -525,7 +588,11 @@ export async function resendSignupOtp(
 
     return { success: true, error: null };
   } catch (err: any) {
-    console.warn('[Supabase resendOtp exception]:', err?.message);
+    console.warn('[Supabase resendOtp exception]:', {
+      message: err?.message,
+      code: err?.code,
+      status: err?.status,
+    });
     return {
       success: false,
       error: 'Unable to verify right now. Check your connection and try again.',
@@ -540,11 +607,19 @@ export async function signOutUser(): Promise<{ error: string | null }> {
   try {
     const { error } = await client.auth.signOut();
     if (error) {
-      console.warn('[Supabase Auth sign-out error]:', error.message);
+      console.warn('[Supabase Auth sign-out error]:', {
+        message: error.message,
+        code: (error as any).code,
+        status: (error as any).status,
+      });
     }
     return { error: null };
   } catch (err: any) {
-    console.warn('[Supabase Auth sign-out exception]:', err?.message);
+    console.warn('[Supabase Auth sign-out exception]:', {
+      message: err?.message,
+      code: err?.code,
+      status: err?.status,
+    });
     return { error: null };
   }
 }
