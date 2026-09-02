@@ -15,7 +15,7 @@ import {
 } from './storage';
 
 /**
- * Client-safe Supabase Integration
+ * Client-safe Supabase Integration (No Auth Dependency)
  * Uses ONLY public anonymous key (NEXT_PUBLIC_SUPABASE_ANON_KEY).
  * Never exposes service role key to browser client.
  */
@@ -26,37 +26,13 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 // Single persistent client instance initialized once
 let supabaseInstance: SupabaseClient | null = null;
 
-/**
- * Canonical production URL for Namaz-Tracker authentication redirects.
- */
-export const PRODUCTION_SITE_URL = 'https://namaz-tracker-nu.vercel.app/';
-
-/**
- * Derives the safe authentication redirect URL.
- * In browser context, uses the active origin (e.g. https://namaz-tracker-nu.vercel.app/).
- * Defaults to the production URL.
- */
-export function getAuthRedirectUrl(): string {
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    const origin = window.location.origin;
-    return origin.endsWith('/') ? origin : `${origin}/`;
-  }
-  return PRODUCTION_SITE_URL;
-}
-
 export function getSupabaseClient(): SupabaseClient | null {
   if (!supabaseUrl || !supabaseAnonKey) {
     return null;
   }
   if (!supabaseInstance) {
     try {
-      supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: false,
-        },
-      });
+      supabaseInstance = createClient(supabaseUrl, supabaseAnonKey);
     } catch (err) {
       console.warn('Failed to initialize Supabase client:', err);
       return null;
@@ -70,7 +46,9 @@ export function isSupabaseConfigured(): boolean {
 }
 
 /**
- * Fetch all Day Logs for the authenticated user from Supabase `day_logs` table
+ * Fetch Day Logs from Supabase `day_logs` table.
+ * Gracefully returns empty when no authenticated user session exists,
+ * preserving clean offline-first storage in localStorage.
  */
 export async function fetchRemoteDayLogs(): Promise<{
   data: Record<string, DayStatusRecord> | null;
@@ -79,18 +57,14 @@ export async function fetchRemoteDayLogs(): Promise<{
   const client = getSupabaseClient();
   if (!client) return { data: null, error: null };
 
-  const user = await getCurrentSessionUser();
-  if (!user) return { data: null, error: null };
-
   try {
     const { data, error } = await client
       .from('day_logs')
-      .select('id, user_id, date, fajr, dhuhr, asr, maghrib, isha')
-      .eq('user_id', user.id);
+      .select('id, user_id, date, fajr, dhuhr, asr, maghrib, isha');
 
     if (error) {
-      console.warn('[Supabase fetchRemoteDayLogs error]:', error.message);
-      return { data: null, error: 'Unable to load prayer records from cloud.' };
+      // With RLS enabled and no active auth session, Supabase returns empty or RLS error
+      return { data: null, error: error.message };
     }
 
     if (!data || data.length === 0) {
@@ -112,28 +86,28 @@ export async function fetchRemoteDayLogs(): Promise<{
 
     return { data: logs, error: null };
   } catch (err: any) {
-    console.warn('[Supabase fetchRemoteDayLogs exception]:', err?.message);
-    return { data: null, error: 'Network error while loading prayer records.' };
+    return { data: null, error: err?.message || 'Network error' };
   }
 }
 
 /**
- * Sync single Day Log row to Supabase `day_logs` table
- * Uses unique (user_id, date) constraint.
+ * Sync single Day Log row to Supabase `day_logs` table if user_id is provided.
+ * Without user_id, remains safely handled in local storage.
  */
 export async function syncRemoteDayLog(
   date: string,
-  record: DayStatusRecord
+  record: DayStatusRecord,
+  userId?: string
 ): Promise<{ success: boolean; error: string | null }> {
   const client = getSupabaseClient();
-  if (!client) return { success: true, error: null };
-
-  const user = await getCurrentSessionUser();
-  if (!user) return { success: false, error: 'User is not authenticated' };
+  if (!client || !userId) {
+    // Local-only mode: successfully handled locally
+    return { success: true, error: null };
+  }
 
   try {
     const payload: SupabaseDayLogRow = {
-      user_id: user.id,
+      user_id: userId,
       date: date,
       fajr: toDbPrayerStatus(record.fajr),
       dhuhr: toDbPrayerStatus(record.dhuhr),
@@ -148,21 +122,20 @@ export async function syncRemoteDayLog(
       .upsert(payload, { onConflict: 'user_id,date' });
 
     if (error) {
-      console.warn('[Supabase syncRemoteDayLog error]:', error.message);
-      return { success: false, error: 'Failed to sync prayer record to cloud.' };
+      return { success: false, error: error.message };
     }
 
     return { success: true, error: null };
   } catch (err: any) {
-    console.warn('[Supabase syncRemoteDayLog exception]:', err?.message);
-    return { success: false, error: 'Offline: Saved locally.' };
+    return { success: false, error: err?.message || 'Offline' };
   }
 }
 
 /**
  * Flush all pending offline Day Logs to Supabase
  */
-export async function flushPendingDayLogs(userId: string): Promise<number> {
+export async function flushPendingDayLogs(userId?: string): Promise<number> {
+  if (!userId) return 0;
   const pendingDates = getPendingSyncDates(userId);
   if (pendingDates.length === 0) return 0;
 
@@ -172,7 +145,7 @@ export async function flushPendingDayLogs(userId: string): Promise<number> {
   for (const dateKey of pendingDates) {
     const record = localLogs[dateKey];
     if (record) {
-      const res = await syncRemoteDayLog(dateKey, record);
+      const res = await syncRemoteDayLog(dateKey, record, userId);
       if (res.success) {
         removePendingSyncDate(dateKey, userId);
         syncedCount++;
@@ -191,464 +164,12 @@ export async function updateRemotePrayerStatus(
   date: string,
   prayer: PrayerKey,
   status: SalahStatus,
-  currentRecord: DayStatusRecord
+  currentRecord: DayStatusRecord,
+  userId?: string
 ): Promise<{ success: boolean; error: string | null }> {
   const updatedRecord = {
     ...currentRecord,
     [prayer]: status,
   };
-  return syncRemoteDayLog(date, parseDayRecord(updatedRecord));
-}
-
-/**
- * Supabase Auth Methods (Email + Password credential validation)
- * Validates credentials and ensures no unverified authenticated state lingers before OTP verification
- */
-export async function signInWithEmail(
-  email: string,
-  password: string
-): Promise<{ user: any; error: string | null }> {
-  const client = getSupabaseClient();
-  if (!client) {
-    return { user: null, error: 'Supabase client is not configured.' };
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-
-  try {
-    const { data, error } = await client.auth.signInWithPassword({
-      email: normalizedEmail,
-      password,
-    });
-
-    if (error) {
-      console.warn('[Supabase Auth sign-in failure]:', {
-        message: error.message,
-        code: (error as any).code,
-        status: (error as any).status,
-      });
-      let msg = 'Invalid email or password. Please try again.';
-      const lower = error.message.toLowerCase();
-      if (lower.includes('email not confirmed')) {
-        msg = 'Please confirm your email before signing in.';
-      } else if (lower.includes('too many') || lower.includes('rate limit')) {
-        msg = 'Too many attempts. Please wait a moment and try again.';
-      } else if (lower.includes('user not found') || lower.includes('invalid credentials') || lower.includes('invalid login credentials')) {
-        msg = 'Invalid email or password. Please try again.';
-      }
-      return { user: null, error: msg };
-    }
-
-    if (!data.user) {
-      return { user: null, error: 'Invalid email or password. Please try again.' };
-    }
-
-    // Security hardening: immediately clear temporary password session so the user
-    // MUST complete email OTP verification to obtain the active authenticated session.
-    await client.auth.signOut();
-
-    return { user: data.user, error: null };
-  } catch (err: any) {
-    console.warn('[Supabase Auth network exception]:', {
-      message: err?.message,
-      code: err?.code,
-      status: err?.status,
-    });
-    return { user: null, error: 'Unable to connect. Please check your internet connection.' };
-  }
-}
-
-export async function signUpWithEmail(
-  email: string,
-  password: string
-): Promise<{ user: any; session: any; error: string | null }> {
-  const client = getSupabaseClient();
-  if (!client) {
-    return { user: null, session: null, error: 'Supabase client is not configured.' };
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-
-  try {
-    const { data, error } = await client.auth.signUp({
-      email: normalizedEmail,
-      password,
-    });
-
-    if (error) {
-      console.warn('[Supabase Auth sign-up failure]:', {
-        message: error.message,
-        code: (error as any).code,
-        status: (error as any).status,
-      });
-      let msg = error.message;
-      const lower = error.message.toLowerCase();
-      if (
-        lower.includes('already registered') ||
-        lower.includes('already exists') ||
-        lower.includes('already been registered')
-      ) {
-        msg = 'An account with this email already exists. Please sign in.';
-      } else if (lower.includes('password')) {
-        msg = 'Password must be at least 6 characters.';
-      } else if (lower.includes('rate limit') || lower.includes('too many')) {
-        msg = 'Too many attempts. Please wait a moment and try again.';
-      } else if (lower.includes('magic link') || lower.includes('error sending')) {
-        msg = 'Email delivery failed. Please verify your Supabase SMTP / email provider settings.';
-      }
-      return { user: null, session: null, error: msg };
-    }
-
-    // Check if user already exists when Supabase returns obfuscated user with 0 identities
-    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-      return { user: null, session: null, error: 'An account with this email already exists. Please sign in.' };
-    }
-
-    return { user: data.user, session: data.session, error: null };
-  } catch (err: any) {
-    console.warn('[Supabase Auth sign-up exception]:', {
-      message: err?.message,
-      code: err?.code,
-      status: err?.status,
-    });
-    return { user: null, session: null, error: 'Unable to connect. Please check your internet connection.' };
-  }
-}
-
-/**
- * Send 6-digit OTP to an email address via Supabase Auth (for signin or signup)
- */
-export async function sendEmailOtp(
-  email: string
-): Promise<{ success: boolean; error: string | null }> {
-  const client = getSupabaseClient();
-  if (!client) {
-    return { success: false, error: 'Supabase client is not configured.' };
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-
-  try {
-    const { error } = await client.auth.signInWithOtp({
-      email: normalizedEmail,
-      options: {
-        shouldCreateUser: true,
-      },
-    });
-
-    if (error) {
-      console.warn('[Supabase sendEmailOtp error]:', {
-        message: error.message,
-        code: (error as any).code,
-        status: (error as any).status,
-      });
-      const lower = error.message.toLowerCase();
-      if (
-        lower.includes('rate limit') ||
-        lower.includes('too many') ||
-        lower.includes('wait') ||
-        (error as any).code === 'over_email_send_rate_limit'
-      ) {
-        return {
-          success: false,
-          error: 'Too many requests. Please wait a moment before trying again.',
-        };
-      }
-      if (lower.includes('network') || lower.includes('connection') || lower.includes('fetch')) {
-        return {
-          success: false,
-          error: 'Unable to connect. Please check your internet connection.',
-        };
-      }
-      if (
-        lower.includes('magic link') ||
-        lower.includes('error sending') ||
-        lower.includes('smtp') ||
-        lower.includes('email provider') ||
-        (error as any).code === 'email_provider_disabled' ||
-        (error as any).code === 'smtp_error'
-      ) {
-        return {
-          success: false,
-          error: 'Email delivery failed. Please verify your Supabase SMTP / email configuration (Resend/Custom SMTP).',
-        };
-      }
-      return {
-        success: false,
-        error: error.message || 'Unable to send verification code. Please try again.',
-      };
-    }
-
-    return { success: true, error: null };
-  } catch (err: any) {
-    console.warn('[Supabase sendEmailOtp exception]:', {
-      message: err?.message,
-      code: err?.code,
-      status: err?.status,
-    });
-    return {
-      success: false,
-      error: 'Unable to send verification code. Please check your internet connection.',
-    };
-  }
-}
-
-/**
- * Verify 6-digit Email OTP Token via Supabase Auth
- */
-export async function verifyEmailOtp(
-  email: string,
-  token: string
-): Promise<{ user: any; session: any; error: string | null }> {
-  const client = getSupabaseClient();
-  if (!client) {
-    return { user: null, session: null, error: 'Supabase client is not configured.' };
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-  const cleanToken = token.trim();
-
-  if (!cleanToken || cleanToken.length < 6) {
-    return { user: null, session: null, error: 'Please enter the full 6-digit code.' };
-  }
-
-  try {
-    // Try email OTP verification first (standard signInWithOtp flow)
-    let res = await client.auth.verifyOtp({
-      email: normalizedEmail,
-      token: cleanToken,
-      type: 'email',
-    });
-
-    // Fallback to signup OTP confirmation type if 'email' type failed with non-expiry error
-    if (res.error) {
-      const lowerErr = res.error.message.toLowerCase();
-      if (!lowerErr.includes('expired')) {
-        const fallbackRes = await client.auth.verifyOtp({
-          email: normalizedEmail,
-          token: cleanToken,
-          type: 'signup',
-        });
-        if (!fallbackRes.error) {
-          res = fallbackRes;
-        }
-      }
-    }
-
-    if (res.error) {
-      console.warn('[Supabase verifyOtp error]:', {
-        message: res.error.message,
-        code: (res.error as any).code,
-        status: (res.error as any).status,
-      });
-      const lower = res.error.message.toLowerCase();
-      if (lower.includes('expired') || lower.includes('has expired')) {
-        return {
-          user: null,
-          session: null,
-          error: 'This verification code has expired. Request a new code.',
-        };
-      }
-      if (
-        lower.includes('invalid') ||
-        lower.includes('incorrect') ||
-        lower.includes('token') ||
-        lower.includes('otp') ||
-        lower.includes('match')
-      ) {
-        return {
-          user: null,
-          session: null,
-          error: 'Incorrect verification code. Please try again.',
-        };
-      }
-      if (
-        lower.includes('fetch') ||
-        lower.includes('network') ||
-        lower.includes('connection') ||
-        lower.includes('timeout')
-      ) {
-        return {
-          user: null,
-          session: null,
-          error: 'Unable to verify right now. Check your connection and try again.',
-        };
-      }
-      return {
-        user: null,
-        session: null,
-        error: 'Incorrect verification code. Please try again.',
-      };
-    }
-
-    return {
-      user: res.data.user ?? res.data.session?.user ?? null,
-      session: res.data.session ?? null,
-      error: null,
-    };
-  } catch (err: any) {
-    console.warn('[Supabase verifyOtp exception]:', {
-      message: err?.message,
-      code: err?.code,
-      status: err?.status,
-    });
-    return {
-      user: null,
-      session: null,
-      error: 'Unable to verify right now. Check your connection and try again.',
-    };
-  }
-}
-
-/**
- * Update user password after authenticated session or email OTP verification
- */
-export async function updateUserPassword(
-  password: string
-): Promise<{ user: any; error: string | null }> {
-  const client = getSupabaseClient();
-  if (!client) {
-    return { user: null, error: 'Supabase client is not configured.' };
-  }
-
-  try {
-    const { data, error } = await client.auth.updateUser({
-      password,
-    });
-
-    if (error) {
-      console.warn('[Supabase updateUser password error]:', {
-        message: error.message,
-        code: (error as any).code,
-        status: (error as any).status,
-      });
-      return { user: null, error: error.message || 'Unable to update password.' };
-    }
-
-    return { user: data.user, error: null };
-  } catch (err: any) {
-    console.warn('[Supabase updateUser password exception]:', {
-      message: err?.message,
-      code: err?.code,
-      status: err?.status,
-    });
-    return { user: null, error: 'Unable to update password. Please try again.' };
-  }
-}
-
-/**
- * Resend Email Verification OTP Token via Supabase Auth
- */
-export async function resendSignupOtp(
-  email: string
-): Promise<{ success: boolean; error: string | null }> {
-  const client = getSupabaseClient();
-  if (!client) {
-    return { success: false, error: 'Supabase client is not configured.' };
-  }
-
-  const normalizedEmail = email.trim().toLowerCase();
-
-  try {
-    const { error } = await client.auth.resend({
-      type: 'signup',
-      email: normalizedEmail,
-    });
-
-    if (error) {
-      console.warn('[Supabase resendOtp error]:', {
-        message: error.message,
-        code: (error as any).code,
-        status: (error as any).status,
-      });
-      const lower = error.message.toLowerCase();
-      if (lower.includes('rate limit') || lower.includes('too many') || lower.includes('wait')) {
-        return {
-          success: false,
-          error: 'Please wait a moment before requesting another code.',
-        };
-      }
-      if (lower.includes('network') || lower.includes('connection') || lower.includes('fetch')) {
-        return {
-          success: false,
-          error: 'Unable to verify right now. Check your connection and try again.',
-        };
-      }
-      if (lower.includes('magic link') || lower.includes('error sending')) {
-        return {
-          success: false,
-          error: 'Email delivery failed. Please verify your Supabase SMTP / email configuration.',
-        };
-      }
-      return {
-        success: false,
-        error: 'Unable to send verification code. Please try again.',
-      };
-    }
-
-    return { success: true, error: null };
-  } catch (err: any) {
-    console.warn('[Supabase resendOtp exception]:', {
-      message: err?.message,
-      code: err?.code,
-      status: err?.status,
-    });
-    return {
-      success: false,
-      error: 'Unable to verify right now. Check your connection and try again.',
-    };
-  }
-}
-
-export async function signOutUser(): Promise<{ error: string | null }> {
-  const client = getSupabaseClient();
-  if (!client) return { error: null };
-
-  try {
-    const { error } = await client.auth.signOut();
-    if (error) {
-      console.warn('[Supabase Auth sign-out error]:', {
-        message: error.message,
-        code: (error as any).code,
-        status: (error as any).status,
-      });
-    }
-    return { error: null };
-  } catch (err: any) {
-    console.warn('[Supabase Auth sign-out exception]:', {
-      message: err?.message,
-      code: err?.code,
-      status: err?.status,
-    });
-    return { error: null };
-  }
-}
-
-export async function getCurrentSessionUser(): Promise<any | null> {
-  const client = getSupabaseClient();
-  if (!client) return null;
-
-  try {
-    const { data } = await client.auth.getSession();
-    return data?.session?.user ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export function subscribeToAuthChanges(callback: (user: any | null) => void): () => void {
-  const client = getSupabaseClient();
-  if (!client) return () => {};
-
-  try {
-    const { data: authListener } = client.auth.onAuthStateChange((_event, session) => {
-      callback(session?.user ?? null);
-    });
-
-    return () => {
-      authListener?.subscription.unsubscribe();
-    };
-  } catch {
-    return () => {};
-  }
+  return syncRemoteDayLog(date, parseDayRecord(updatedRecord), userId);
 }

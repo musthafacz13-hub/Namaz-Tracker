@@ -10,8 +10,6 @@ import {
   Volume2,
   Smartphone,
   Clock,
-  User,
-  LogOut,
   CheckCircle2,
   AlertTriangle,
 } from 'lucide-react';
@@ -19,8 +17,6 @@ import { exportAllData, importData } from '@/lib/storage';
 
 interface SettingsScreenProps {
   settings: AppSettings;
-  currentUser?: { email?: string; id?: string } | null;
-  onSignOut: () => void;
   onUpdateSettings: (updates: Partial<AppSettings>) => void;
   onClearHistory: () => void;
   onResetAllData?: () => void;
@@ -30,8 +26,6 @@ interface SettingsScreenProps {
 
 export default function SettingsScreen({
   settings,
-  currentUser,
-  onSignOut,
   onUpdateSettings,
   onClearHistory,
 }: SettingsScreenProps) {
@@ -109,7 +103,7 @@ export default function SettingsScreen({
           Settings
         </h1>
         <p className="text-xs font-mono text-neutral-500 uppercase tracking-wider mt-0.5">
-          Preferences & Account
+          Preferences & Data
         </p>
       </header>
 
@@ -126,49 +120,7 @@ export default function SettingsScreen({
 
       <div className="space-y-8">
         {/* ================================================== */}
-        {/* SECTION 1: ACCOUNT                                 */}
-        {/* ================================================== */}
-        <section aria-label="Account Settings">
-          <div className="border-b border-black pb-1.5 mb-3">
-            <h2 className="text-xs font-black font-mono tracking-widest text-neutral-500 uppercase">
-              ACCOUNT
-            </h2>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between py-2">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 border border-black flex items-center justify-center shrink-0">
-                  <User size={18} strokeWidth={2} />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-bold font-mono text-black truncate max-w-[200px] sm:max-w-xs">
-                    {currentUser?.email || 'Authenticated User'}
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-black inline-block"></span>
-                    <span className="text-[11px] font-mono uppercase text-neutral-500 tracking-wider">
-                      Active
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <button
-              id="sign-out-btn"
-              onClick={onSignOut}
-              aria-label="Sign Out of Account"
-              className="w-full min-h-[44px] px-4 border border-black bg-white text-black text-xs font-mono font-bold uppercase tracking-wider hover:bg-black hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-black transition-colors flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <LogOut size={15} strokeWidth={2.5} />
-              <span>SIGN OUT</span>
-            </button>
-          </div>
-        </section>
-
-        {/* ================================================== */}
-        {/* SECTION 2: PREFERENCES                             */}
+        {/* SECTION 1: PREFERENCES                             */}
         {/* ================================================== */}
         <section aria-label="Application Preferences">
           <div className="border-b border-black pb-1.5 mb-3">
@@ -329,7 +281,7 @@ export default function SettingsScreen({
         </section>
 
         {/* ================================================== */}
-        {/* SECTION 3: DATA & BACKUP                           */}
+        {/* SECTION 2: DATA & BACKUP                           */}
         {/* ================================================== */}
         <section aria-label="Data and Backup">
           <div className="border-b border-black pb-1.5 mb-3">
@@ -372,21 +324,21 @@ export default function SettingsScreen({
               aria-hidden="true"
             />
 
-            {/* Sync State Indicator */}
+            {/* Storage State Indicator */}
             <div className="pt-2 flex items-center justify-between text-xs font-mono text-neutral-500">
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={13} className="text-black" />
-                <span className="uppercase tracking-wider font-semibold text-black">Status: Synced</span>
+                <span className="uppercase tracking-wider font-semibold text-black">Status: Local Active</span>
               </div>
               <span className="text-[11px] text-neutral-400 uppercase tracking-widest">
-                Cloud & Local Storage
+                Offline-First Storage
               </span>
             </div>
           </div>
         </section>
 
         {/* ================================================== */}
-        {/* SECTION 4: DANGER ZONE                             */}
+        {/* SECTION 3: DANGER ZONE                             */}
         {/* ================================================== */}
         <section aria-label="Danger Zone">
           <div className="border-b border-black pb-1.5 mb-3">

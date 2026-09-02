@@ -8,7 +8,6 @@ import {
   saveSalahItems,
   loadDayLogs,
   saveDayLog,
-  saveAllDayLogs,
   loadSettings,
   saveSettings,
   getTodayKey,
@@ -18,9 +17,6 @@ import {
   getSalahStatusForDay,
   getNextSalahStatus,
   normalizePrayerKey,
-  addPendingSyncDate,
-  removePendingSyncDate,
-  getPendingSyncDates,
   DEFAULT_SALAH_ITEMS,
   DEFAULT_SETTINGS,
 } from '@/lib/storage';
@@ -31,15 +27,6 @@ import {
   formatToDateKey,
 } from '@/lib/calendar';
 import { calculateStreakStats } from '@/lib/streak';
-import {
-  fetchRemoteDayLogs,
-  syncRemoteDayLog,
-  flushPendingDayLogs,
-  isSupabaseConfigured,
-  subscribeToAuthChanges,
-  getCurrentSessionUser,
-  signOutUser,
-} from '@/lib/supabase';
 import LoadingScreen from '@/components/LoadingScreen';
 import HomeScreen from '@/components/HomeScreen';
 import ConsistencyScreen from '@/components/ConsistencyScreen';
@@ -47,14 +34,11 @@ import EditScreen from '@/components/EditScreen';
 import BinScreen from '@/components/BinScreen';
 import SettingsScreen from '@/components/SettingsScreen';
 import AboutScreen from '@/components/AboutScreen';
-import AuthScreen from '@/components/AuthScreen';
 import BottomNav from '@/components/BottomNav';
 
 export default function Page() {
-  const [currentUser, setCurrentUser] = useState<any | null>(null);
-  const [authInitialized, setAuthInitialized] = useState<boolean>(() => !isSupabaseConfigured());
   const [salahItems, setSalahItems] = useState<SalahItem[]>(() => loadSalahItems());
-  const [dayLogs, setDayLogs] = useState<Record<string, DayStatusRecord>>({});
+  const [dayLogs, setDayLogs] = useState<Record<string, DayStatusRecord>>(() => loadDayLogs());
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [currentDateKey, setCurrentDateKey] = useState<string>(() => getTodayKey());
   const [currentScreen, setCurrentScreen] = useState<ScreenType>('home');
@@ -65,7 +49,6 @@ export default function Page() {
       navigator.serviceWorker
         .register('/sw.js')
         .then((reg) => {
-          // Check for SW updates
           reg.update().catch(() => {});
         })
         .catch((err) => {
@@ -106,140 +89,15 @@ export default function Page() {
     };
   }, []);
 
-  // 3. Online Sync Handler (Flushes pending offline queue on reconnect)
-  useEffect(() => {
-    if (typeof window === 'undefined' || !currentUser?.id) return;
-
-    const handleOnline = async () => {
-      try {
-        await flushPendingDayLogs(currentUser.id);
-        const remote = await fetchRemoteDayLogs();
-        if (remote.data) {
-          const pending = getPendingSyncDates(currentUser.id);
-          setDayLogs((prev) => {
-            const merged = { ...prev };
-            Object.entries(remote.data!).forEach(([date, rec]) => {
-              if (!pending.includes(date)) {
-                merged[date] = rec;
-              }
-            });
-            saveAllDayLogs(merged, currentUser.id);
-            return merged;
-          });
-        }
-      } catch (err) {
-        console.warn('Offline sync flush failed:', err);
-      }
-    };
-
-    window.addEventListener('online', handleOnline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-    };
-  }, [currentUser]);
-
-  // 4. Initialize auth session and listen for auth state changes without duplicate calls
-  useEffect(() => {
-    if (!isSupabaseConfigured()) return;
-
-    let isMounted = true;
-
-    // Check for existing valid session on startup
-    getCurrentSessionUser().then((user) => {
-      if (isMounted) {
-        if (user) {
-          setCurrentUser(user);
-        }
-        setAuthInitialized(true);
-      }
-    });
-
-    const unsubscribe = subscribeToAuthChanges((user) => {
-      if (isMounted) {
-        // If logged out or session terminated, lock app immediately
-        if (!user) {
-          setCurrentUser(null);
-        } else {
-          setCurrentUser(user);
-        }
-        setAuthInitialized(true);
-      }
-    });
-
-    return () => {
-      isMounted = false;
-      unsubscribe();
-    };
-  }, []);
-
-  // 5. Hydrate from Supabase on initial load or user change
-  useEffect(() => {
-    if (!isSupabaseConfigured() || !currentUser) return;
-
-    let isMounted = true;
-    const userId = currentUser.id;
-
-    async function hydrateCloudData() {
-      // Load local user-scoped cache immediately to prevent blank flash
-      const localCached = loadDayLogs(userId);
-      if (isMounted) {
-        setDayLogs(localCached);
-        setSalahItems(loadSalahItems(userId));
-        setSettings(loadSettings(userId));
-      }
-
-      try {
-        // Flush any pending unsynced offline records first
-        await flushPendingDayLogs(userId);
-
-        const remoteLogs = await fetchRemoteDayLogs();
-
-        if (isMounted) {
-          const pending = getPendingSyncDates(userId);
-          if (remoteLogs.data && Object.keys(remoteLogs.data).length > 0) {
-            // Merge remote with local, preserving any un-synced pending items
-            const merged: Record<string, DayStatusRecord> = { ...remoteLogs.data };
-            pending.forEach((pendingDate) => {
-              if (localCached[pendingDate]) {
-                merged[pendingDate] = localCached[pendingDate];
-              }
-            });
-
-            setDayLogs(merged);
-            saveAllDayLogs(merged, userId);
-          } else if (Object.keys(localCached).length === 0) {
-            // New user account has no logs yet: start with clean isolated logs
-            setDayLogs({});
-            saveAllDayLogs({}, userId);
-          }
-        }
-      } catch (err) {
-        console.warn('Silent fallback to local storage:', err);
-      }
-    }
-
-    hydrateCloudData();
-    return () => {
-      isMounted = false;
-    };
-  }, [currentUser]);
-
-  const handleSignOut = async () => {
-    await signOutUser();
-    setCurrentUser(null);
-    setSalahItems(DEFAULT_SALAH_ITEMS);
-    setDayLogs({});
-    setCurrentScreen('home');
-  };
-
-  // Sync state changes with storage and cloud
+  // Salah items persistence
   const handleUpdateSalahItems = (newItems: SalahItem[]) => {
     setSalahItems(newItems);
-    saveSalahItems(newItems, currentUser?.id);
+    saveSalahItems(newItems);
   };
 
+  // Day logs updates (offline-first, direct local persistence)
   const handleSetSalahStatus = useCallback(
-    async (id: string, newStatus: SalahStatus, dateKey: string = currentDateKey) => {
+    (id: string, newStatus: SalahStatus, dateKey: string = currentDateKey) => {
       const pKey = normalizePrayerKey(id);
       if (!pKey) return;
 
@@ -259,26 +117,9 @@ export default function Page() {
 
       const newLogs = { ...dayLogs, [dateKey]: updatedRec };
       setDayLogs(newLogs);
-      saveDayLog(dateKey, updatedRec, currentUser?.id);
-
-      // Track in offline pending queue
-      if (currentUser?.id) {
-        addPendingSyncDate(dateKey, currentUser.id);
-      }
-
-      // Perform optimistic remote sync
-      if (isSupabaseConfigured() && currentUser?.id) {
-        try {
-          const res = await syncRemoteDayLog(dateKey, updatedRec);
-          if (res.success) {
-            removePendingSyncDate(dateKey, currentUser.id);
-          }
-        } catch {
-          // Kept safely in pending queue for background sync
-        }
-      }
+      saveDayLog(dateKey, updatedRec);
     },
-    [currentDateKey, dayLogs, currentUser]
+    [currentDateKey, dayLogs]
   );
 
   const handleCycleSalahStatus = useCallback(
@@ -392,16 +233,16 @@ export default function Page() {
   const handleUpdateSettings = (updates: Partial<AppSettings>) => {
     const newSettings = { ...settings, ...updates };
     setSettings(newSettings);
-    saveSettings(newSettings, currentUser?.id);
+    saveSettings(newSettings);
   };
 
   const handleClearHistory = () => {
-    clearAllHistory(currentUser?.id);
+    clearAllHistory();
     setDayLogs({});
   };
 
   const handleResetAllData = () => {
-    resetToDefaults(currentUser?.id);
+    resetToDefaults();
     setSalahItems(DEFAULT_SALAH_ITEMS);
     setDayLogs({});
     setSettings(DEFAULT_SETTINGS);
@@ -452,32 +293,6 @@ export default function Page() {
   const binCount = salahItems.filter((i) => Boolean(i.deletedAt)).length;
   const streakStats = calculateStreakStats(dayLogs);
 
-  // 1. Initial Session Check Loading (Prevents flickering)
-  if (!authInitialized) {
-    return (
-      <main className="min-h-screen bg-white text-black flex flex-col items-center justify-center font-sans">
-        <span className="text-xs font-mono font-bold tracking-[0.25em] text-neutral-400 uppercase animate-pulse">
-          Salah
-        </span>
-      </main>
-    );
-  }
-
-  // 2. Unauthenticated Gate: Show Authentication Page as the First Screen
-  if (!currentUser) {
-    return (
-      <main className="min-h-screen bg-white text-black font-sans">
-        <AuthScreen
-          onSuccess={(user) => {
-            setCurrentUser(user);
-            setCurrentScreen('home');
-          }}
-        />
-      </main>
-    );
-  }
-
-  // 3. Authenticated Application Experience
   return (
     <main className="min-h-screen bg-white text-black flex flex-col font-sans">
       <AnimatePresence mode="wait">
@@ -545,8 +360,6 @@ export default function Page() {
       {currentScreen === 'settings' && (
         <SettingsScreen
           settings={settings}
-          currentUser={currentUser}
-          onSignOut={handleSignOut}
           onUpdateSettings={handleUpdateSettings}
           onClearHistory={handleClearHistory}
           onResetAllData={handleResetAllData}
@@ -559,7 +372,7 @@ export default function Page() {
         <AboutScreen onBack={() => setCurrentScreen('settings')} />
       )}
 
-      {/* Fixed Bottom Navigation (visible on authenticated main app screens) */}
+      {/* Fixed Bottom Navigation */}
       {currentScreen !== 'loading' && (
         <BottomNav
           currentScreen={currentScreen}
